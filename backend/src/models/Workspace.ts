@@ -1,5 +1,5 @@
 import { Schema, model } from 'mongoose';
-import { idTransform } from '../utils/toJSON.js';
+import { docToJSON } from '../utils/serialize.js';
 
 const memberSchema = new Schema(
   {
@@ -16,7 +16,7 @@ const workspaceSchema = new Schema(
     ownerId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     members: { type: [memberSchema], default: [] },
   },
-  { timestamps: true, toJSON: { transform: idTransform } },
+  { timestamps: true, toJSON: { transform: docToJSON } },
 );
 
 workspaceSchema.index({ 'members.userId': 1 });

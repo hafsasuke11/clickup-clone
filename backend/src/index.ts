@@ -3,8 +3,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
-import { connectDB } from './db.js';
-import { CORS_ORIGINS, IS_PRODUCTION } from './config.js';
+import { connectDB, CORS_ORIGINS, IS_PRODUCTION } from './config.js';
 import authRoutes from './routes/auth.js';
 import workspaceRoutes from './routes/workspaces.js';
 import inviteRoutes from './routes/invites.js';

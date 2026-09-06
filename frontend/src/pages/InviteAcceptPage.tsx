@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { UserPlus, AlertCircle } from 'lucide-react';
-import { getInviteInfo, acceptInvite, type InviteInfo } from '@/utils/authApi';
+import { getInviteInfo, acceptInvite, type InviteInfo } from '@/utils/api';
 import { useSession } from '@/utils/authGuards';
 import { useAuthStore } from '@/store/authStore';
 import { useUiStore } from '@/store/uiStore';

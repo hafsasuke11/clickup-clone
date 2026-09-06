@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { apiMe } from '@/utils/authApi';
+import { apiMe } from '@/utils/api';
 import type { User } from '@/utils/types';
 import { useWorkspaceStore } from './workspaceStore';
 import { useTaskStore } from './taskStore';
@@ -223,7 +223,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       }
       set({ user: fresh, loading: false, hydrated: true, knownAccounts: knownAccountsOf(pool) });
     } catch {
-      // A 401 is already turned into a clean logout by apiClient's
+      // A 401 is already turned into a clean logout by the API client's
       // onUnauthorized hook. Anything else here is transient (network,
       // server hiccup) — keep the stored session so a flaky connection
       // doesn't sign the user out.

@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { Schema, model } from 'mongoose';
-import { idTransform } from '../utils/toJSON.js';
+import { docToJSON } from '../utils/serialize.js';
 
 const inviteSchema = new Schema(
   {
@@ -11,7 +11,7 @@ const inviteSchema = new Schema(
     invitedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     expiresAt: { type: Date, required: true, default: () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) },
   },
-  { timestamps: true, toJSON: { transform: idTransform } },
+  { timestamps: true, toJSON: { transform: docToJSON } },
 );
 
 export const WorkspaceInvite = model('WorkspaceInvite', inviteSchema);

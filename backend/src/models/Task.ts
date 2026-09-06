@@ -1,5 +1,5 @@
 import { Schema, model } from 'mongoose';
-import { idTransform } from '../utils/toJSON.js';
+import { docToJSON } from '../utils/serialize.js';
 
 export const TASK_STATUSES = ['pending', 'in_progress', 'todo', 'completed'] as const;
 export const TASK_PRIORITIES = ['urgent', 'high', 'normal', 'low'] as const;
@@ -16,7 +16,7 @@ const taskSchema = new Schema(
     assigneeId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   },
-  { timestamps: true, toJSON: { transform: idTransform } },
+  { timestamps: true, toJSON: { transform: docToJSON } },
 );
 
 taskSchema.index({ workspaceId: 1, status: 1 });

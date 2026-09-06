@@ -1,7 +1,9 @@
 /**
- * Centralised runtime configuration and safety checks.
- * Imported early (via the route modules) so `dotenv/config` has already run.
+ * All environment configuration and startup checks live here:
+ * reading env vars, validating the JWT secret, and connecting to MongoDB.
+ * Imported after `dotenv/config` has run.
  */
+import mongoose from 'mongoose';
 
 const DEV_FALLBACK_SECRET = 'clickup-dev-secret-change-in-production';
 const KNOWN_WEAK_SECRETS = new Set([DEV_FALLBACK_SECRET, 'change-me-in-production', 'secret', 'changeme']);
@@ -39,3 +41,19 @@ export const CORS_ORIGINS = (process.env.CORS_ORIGINS ?? process.env.FRONTEND_UR
   .split(',')
   .map((o) => o.trim())
   .filter(Boolean);
+
+/** Connect to MongoDB using MONGODB_URI. Exits the process if it can't. */
+export async function connectDB(): Promise<void> {
+  const uri = process.env.MONGODB_URI;
+  if (!uri) {
+    console.error('MONGODB_URI is not set. Add it to backend/.env.');
+    process.exit(1);
+  }
+  try {
+    await mongoose.connect(uri);
+    console.log('Connected to MongoDB');
+  } catch (err) {
+    console.error('Failed to connect to MongoDB:', err);
+    process.exit(1);
+  }
+}

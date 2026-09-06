@@ -3,7 +3,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from '@/App'
 import './index.css'
-import { configureApiClient } from '@/utils/apiClient'
+import { configureApiClient } from '@/utils/api'
 import { useAuthStore, subscribeAuthStorage } from '@/store/authStore'
 
 configureApiClient({

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { apiClient } from '@/utils/apiClient';
+import { apiClient } from '@/utils/api';
 import { useUiStore } from './uiStore';
 import type { Project, Task, TaskPriority, TaskStatus } from '@/utils/types';
 

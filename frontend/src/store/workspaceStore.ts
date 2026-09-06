@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { apiClient } from '@/utils/apiClient';
+import { apiClient } from '@/utils/api';
 import type { ActivityEntry, Member, PendingInvite, Workspace, WorkspaceRole } from '@/utils/types';
 
 interface WorkspaceStore {

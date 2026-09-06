@@ -1,5 +1,5 @@
 import { Schema, model } from 'mongoose';
-import { idTransform } from '../utils/toJSON.js';
+import { docToJSON } from '../utils/serialize.js';
 
 export const AUDIT_ACTIONS = [
   'member_invited',
@@ -20,7 +20,7 @@ const auditLogSchema = new Schema(
     targetUserId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     meta: { type: Schema.Types.Mixed, default: {} },
   },
-  { timestamps: true, toJSON: { transform: idTransform } },
+  { timestamps: true, toJSON: { transform: docToJSON } },
 );
 
 auditLogSchema.index({ workspaceId: 1, createdAt: -1 });

@@ -1,5 +1,5 @@
 import { Schema, model, type InferSchemaType } from 'mongoose';
-import { idTransform } from '../utils/toJSON.js';
+import { docToJSON } from '../utils/serialize.js';
 
 const userSchema = new Schema(
   {
@@ -8,7 +8,7 @@ const userSchema = new Schema(
     fullName: { type: String, required: true, trim: true },
     company: { type: String, default: '' },
   },
-  { timestamps: true, toJSON: { transform: idTransform } },
+  { timestamps: true, toJSON: { transform: docToJSON } },
 );
 
 export type UserDoc = InferSchemaType<typeof userSchema> & { _id: Schema.Types.ObjectId };

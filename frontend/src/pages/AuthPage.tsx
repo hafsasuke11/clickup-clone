@@ -7,7 +7,7 @@ import {
   Mail, Lock, ArrowRight, Sparkles, User, Building2,
   Eye, EyeOff, AlertCircle, UserPlus,
 } from 'lucide-react';
-import { apiSignup, apiLogin, getInviteInfo, acceptInvite, type InviteInfo } from '@/utils/authApi';
+import { apiSignup, apiLogin, getInviteInfo, acceptInvite, type InviteInfo } from '@/utils/api';
 import { useAuthStore } from '@/store/authStore';
 import { useUiStore } from '@/store/uiStore';
 import { signupSchema, loginSchema, type SignupFormData, type LoginFormData } from '@/utils/authValidation';
