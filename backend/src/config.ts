@@ -42,18 +42,38 @@ export const CORS_ORIGINS = (process.env.CORS_ORIGINS ?? process.env.FRONTEND_UR
   .map((o) => o.trim())
   .filter(Boolean);
 
-/** Connect to MongoDB using MONGODB_URI. Exits the process if it can't. */
+/**
+ * Connect to MongoDB using MONGODB_URI, retrying with backoff instead of exiting
+ * on failure. The HTTP server starts regardless (see index.ts), so a database
+ * that is slow to start or briefly unavailable never kills the process —
+ * Mongoose finishes connecting in the background and reconnects on its own if
+ * the link later drops.
+ */
 export async function connectDB(): Promise<void> {
   const uri = process.env.MONGODB_URI;
   if (!uri) {
+    // A missing URI is a config mistake, not a transient fault — retrying is pointless.
     console.error('MONGODB_URI is not set. Add it to backend/.env.');
     process.exit(1);
   }
-  try {
-    await mongoose.connect(uri);
-    console.log('Connected to MongoDB');
-  } catch (err) {
-    console.error('Failed to connect to MongoDB:', err);
-    process.exit(1);
+
+  // Mongoose buffers queries while disconnected and auto-reconnects; these
+  // listeners just make what is happening visible in the terminal.
+  mongoose.connection.on('disconnected', () => console.warn('MongoDB disconnected — reconnecting in the background'));
+  mongoose.connection.on('reconnected', () => console.log('MongoDB reconnected'));
+  mongoose.connection.on('error', (err) => console.error('MongoDB connection error:', (err as Error).message));
+
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await mongoose.connect(uri, { serverSelectionTimeoutMS: 5000 });
+      console.log('Connected to MongoDB');
+      return;
+    } catch (err) {
+      const waitMs = Math.min(30_000, 1000 * 2 ** Math.min(attempt, 5));
+      console.error(
+        `MongoDB connection attempt ${attempt} failed (${(err as Error).message}). Retrying in ${waitMs / 1000}s…`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
   }
 }

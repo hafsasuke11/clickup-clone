@@ -9,6 +9,19 @@ import workspaceRoutes from './routes/workspaces.js';
 import inviteRoutes from './routes/invites.js';
 import { requireAuth } from './middleware/requireAuth.js';
 
+// Last-resort safety net. In development, log an unexpected error but keep the
+// server running so one bad request or a momentary database blip never leaves
+// the frontend showing "Failed to fetch". In production, log and exit so a
+// process manager can restart from a known-good state.
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection:', reason);
+  if (IS_PRODUCTION) process.exit(1);
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
+  if (IS_PRODUCTION) process.exit(1);
+});
+
 const app = express();
 const PORT = process.env.PORT ?? 3001;
 
@@ -50,8 +63,19 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   res.status(status).json({ error: message });
 });
 
-connectDB().then(() => {
-  app.listen(PORT, () => {
-    console.log(`API running on http://localhost:${PORT}`);
-  });
+// Start listening right away so the API is reachable even while MongoDB is still
+// coming online. connectDB() keeps retrying in the background and Mongoose
+// queues queries until the connection is ready.
+const server = app.listen(PORT, () => {
+  console.log(`API running on http://localhost:${PORT}`);
 });
+
+// A listen failure (port already in use, etc.) is not something to recover
+// from — exit loudly instead of letting the uncaughtException net below swallow
+// it and leave a half-dead process holding no port.
+server.on('error', (err) => {
+  console.error('HTTP server failed to start:', err);
+  process.exit(1);
+});
+
+void connectDB();
