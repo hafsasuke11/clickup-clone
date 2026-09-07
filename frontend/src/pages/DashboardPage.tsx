@@ -1,15 +1,16 @@
 import { AlertTriangle, Clock, Users, ListChecks } from 'lucide-react';
 import { useTaskStore, getVisibleTasks } from '@/store/taskStore';
-import { useWorkspaceStore } from '@/store/workspaceStore';
+import { useWorkspaceStore, useTaskStatuses } from '@/store/workspaceStore';
 import { useUiStore } from '@/store/uiStore';
 import { FilterButton, AssigneeButton } from '@/components/TaskToolbar';
-import { STATUS_META, TASK_STATUS_ORDER } from '@/components/TaskStatusPill';
+import { StatusDot, resolveStatus } from '@/components/TaskStatusPill';
 import { initialsOf, colorFor } from '@/utils/avatarHelpers';
 
 export default function DashboardPage() {
   const store = useTaskStore();
   const tasks = getVisibleTasks(store);
   const { members } = useWorkspaceStore();
+  const statuses = useTaskStatuses();
   const { setSelectedTaskId } = useUiStore();
 
   const now = new Date();
@@ -37,15 +38,14 @@ export default function DashboardPage() {
 
       <div className="flex-1 overflow-y-auto p-6 space-y-6 max-w-6xl mx-auto w-full">
       {/* Status tiles */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
-        {TASK_STATUS_ORDER.map((status) => {
-          const meta = STATUS_META[status];
-          const count = tasks.filter((t) => t.status === status).length;
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+        {statuses.map((s) => {
+          const count = tasks.filter((t) => t.status === s.key).length;
           return (
-            <div key={status} className="bg-surface border border-border rounded-xl p-4">
+            <div key={s.key} className="bg-surface border border-border rounded-xl p-4">
               <div className="flex items-center gap-1.5 mb-2">
-                <span className={`w-2 h-2 rounded-full ${meta.dot}`} />
-                <span className="text-xs font-medium text-text-secondary">{meta.label}</span>
+                <StatusDot color={s.color} />
+                <span className="text-xs font-medium text-text-secondary">{s.label}</span>
               </div>
               <p className="text-2xl font-bold text-text-primary">{count}</p>
             </div>
@@ -128,7 +128,7 @@ export default function DashboardPage() {
               <button key={t.id} onClick={() => setSelectedTaskId(t.id)}
                 className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-black/[0.02] transition-colors text-left">
                 <span className="text-sm text-text-primary truncate">{t.name}</span>
-                <span className="text-xs text-text-secondary shrink-0 ml-3">{STATUS_META[t.status].label}</span>
+                <span className="text-xs text-text-secondary shrink-0 ml-3">{resolveStatus(statuses, t.status).label}</span>
               </button>
             ))}
           </div>

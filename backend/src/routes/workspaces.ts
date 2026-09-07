@@ -11,6 +11,7 @@ import { sendInviteEmail, buildInviteUrl, isEmailConfigured } from '../services/
 import { logActivity } from '../services/auditService.js';
 import projectRoutes from './projects.js';
 import taskRoutes from './tasks.js';
+import statusRoutes from './statuses.js';
 
 const router = Router();
 
@@ -345,5 +346,6 @@ router.delete('/:workspaceId', requireWorkspaceMember, async (req, res) => {
 
 router.use('/:workspaceId/projects', requireWorkspaceMember, projectRoutes);
 router.use('/:workspaceId/tasks', requireWorkspaceMember, taskRoutes);
+router.use('/:workspaceId/statuses', requireWorkspaceMember, statusRoutes);
 
 export default router;

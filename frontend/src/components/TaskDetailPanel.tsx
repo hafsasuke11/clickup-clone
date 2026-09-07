@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
-import { X, Trash2, Calendar, AlignLeft, Tag, User, ChevronDown } from 'lucide-react';
+import { X, Trash2, Calendar, AlignLeft, Tag, User, ChevronDown, FolderKanban } from 'lucide-react';
 import { useTaskStore } from '@/store/taskStore';
-import { useWorkspaceStore } from '@/store/workspaceStore';
+import { useWorkspaceStore, useTaskStatuses } from '@/store/workspaceStore';
 import { useUiStore } from '@/store/uiStore';
-import type { TaskPriority, TaskStatus } from '@/utils/types';
-import { STATUS_META, TASK_STATUS_ORDER } from './TaskStatusPill';
+import type { TaskPriority } from '@/utils/types';
+import { StatusSelect } from './TaskStatusPill';
 
 const priorityOptions: { value: TaskPriority; label: string; color: string }[] = [
   { value: 'urgent', label: 'Urgent', color: 'text-red-600' },
@@ -15,39 +15,6 @@ const priorityOptions: { value: TaskPriority; label: string; color: string }[] =
 
 function initialsOf(name: string) {
   return name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase();
-}
-
-function StatusBadge({ status, onChange }: { status: TaskStatus; onChange: (s: TaskStatus) => void }) {
-  const [open, setOpen] = useState(false);
-  const cur = STATUS_META[status];
-  const CurIcon = cur.icon;
-  return (
-    <div className="relative">
-      <button onClick={() => setOpen((v) => !v)}
-        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-semibold transition-all hover:brightness-95 ${cur.bg} ${cur.border} ${cur.text}`}>
-        <CurIcon size={13} strokeWidth={2.5} />
-        <span>{cur.label}</span>
-        <ChevronDown size={13} className="opacity-60" />
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-full mt-1 w-40 bg-surface border border-border rounded-xl shadow-xl z-50 py-1">
-            {TASK_STATUS_ORDER.map((s) => {
-              const meta = STATUS_META[s];
-              const Icon = meta.icon;
-              return (
-                <button key={s} onClick={() => { onChange(s); setOpen(false); }}
-                  className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors hover:bg-black/[0.03] ${s === status ? meta.text : 'text-text-secondary hover:text-text-primary'}`}>
-                  <Icon size={13} strokeWidth={2.5} className={meta.text} />{meta.label}
-                </button>
-              );
-            })}
-          </div>
-        </>
-      )}
-    </div>
-  );
 }
 
 function PriorityBadge({ priority, onChange }: { priority: TaskPriority; onChange: (p: TaskPriority) => void }) {
@@ -115,8 +82,9 @@ function AssigneeBadge({ assigneeId, onChange }: { assigneeId: string | null; on
 }
 
 export default function TaskDetailPanel() {
-  const { tasks, updateTask, deleteTask } = useTaskStore();
+  const { tasks, projects, updateTask, deleteTask } = useTaskStore();
   const { workspace, members } = useWorkspaceStore();
+  const taskStatuses = useTaskStatuses();
   const { selectedTaskId, setSelectedTaskId } = useUiStore();
   const task = tasks.find((t) => t.id === selectedTaskId);
   const [name, setName] = useState('');
@@ -164,7 +132,7 @@ export default function TaskDetailPanel() {
           />
 
           <div className="flex items-center gap-2 flex-wrap">
-            <StatusBadge status={task.status} onChange={(s) => save({ status: s })} />
+            <StatusSelect statuses={taskStatuses} status={task.status} onChange={(s) => save({ status: s })} />
             <PriorityBadge priority={task.priority} onChange={(p) => save({ priority: p })} />
           </div>
 
@@ -186,6 +154,21 @@ export default function TaskDetailPanel() {
             <div className="flex-1">
               <p className="text-xs text-text-secondary mb-1">Assignee</p>
               <AssigneeBadge assigneeId={task.assigneeId} onChange={(id) => save({ assigneeId: id })} />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <FolderKanban size={15} className="text-text-secondary shrink-0" />
+            <div className="flex-1">
+              <p className="text-xs text-text-secondary mb-1">Project</p>
+              <select
+                value={task.projectId ?? ''}
+                onChange={(e) => save({ projectId: e.target.value || null })}
+                className="bg-background border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent-purple transition-colors"
+              >
+                <option value="">No project</option>
+                {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
             </div>
           </div>
 

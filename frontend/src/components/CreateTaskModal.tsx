@@ -1,10 +1,9 @@
 import { useState } from 'react';
 import { X, CheckSquare, Folder } from 'lucide-react';
 import { useTaskStore } from '@/store/taskStore';
-import { useWorkspaceStore } from '@/store/workspaceStore';
+import { useWorkspaceStore, useTaskStatuses } from '@/store/workspaceStore';
 import { useUiStore } from '@/store/uiStore';
 import type { TaskPriority, TaskStatus } from '@/utils/types';
-import { STATUS_META, TASK_STATUS_ORDER } from './TaskStatusPill';
 
 type Tab = 'task' | 'project';
 
@@ -12,6 +11,7 @@ const COLORS = ['#6D4FE0', '#2E90FA', '#F79009', '#EE46BC', '#12B76A', '#F04438'
 
 export default function CreateModal() {
   const { workspace } = useWorkspaceStore();
+  const taskStatuses = useTaskStatuses();
   const { createTask, createProject, projects } = useTaskStore();
   const { createModalDueDate, setCreateModalDueDate, setCreateModalOpen, addToast } = useUiStore();
   const [activeTab, setActiveTab] = useState<Tab>('task');
@@ -42,7 +42,7 @@ export default function CreateModal() {
       });
     } else if (activeTab === 'project') {
       if (!projName.trim()) return;
-      await createProject(workspace.id, projName.trim(), projColor);
+      await createProject(workspace.id, { name: projName.trim(), color: projColor });
       addToast(`Project "${projName.trim()}" created`, 'success');
     }
     close();
@@ -93,7 +93,7 @@ export default function CreateModal() {
                   <label className="block text-xs text-text-secondary mb-1">Status</label>
                   <select value={taskStatus} onChange={(e) => setTaskStatus(e.target.value as TaskStatus)}
                     className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-accent-purple transition-colors">
-                    {TASK_STATUS_ORDER.map((s) => <option key={s} value={s}>{STATUS_META[s].label}</option>)}
+                    {taskStatuses.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
                   </select>
                 </div>
                 <div>

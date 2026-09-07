@@ -4,6 +4,9 @@
  * Imported after `dotenv/config` has run.
  */
 import mongoose from 'mongoose';
+import { Task } from './models/Task.js';
+import { Workspace } from './models/Workspace.js';
+import { DEFAULT_PROJECT_STATUSES, DEFAULT_TASK_STATUSES } from './models/statusDefaults.js';
 
 const DEV_FALLBACK_SECRET = 'clickup-dev-secret-change-in-production';
 const KNOWN_WEAK_SECRETS = new Set([DEV_FALLBACK_SECRET, 'change-me-in-production', 'secret', 'changeme']);
@@ -49,6 +52,40 @@ export const CORS_ORIGINS = (process.env.CORS_ORIGINS ?? process.env.FRONTEND_UR
  * Mongoose finishes connecting in the background and reconnects on its own if
  * the link later drops.
  */
+/**
+ * Small idempotent data fix-ups run once per successful connection. Cheap to
+ * re-run: the queries no-op when there is nothing to change.
+ */
+async function runStartupMigrations(): Promise<void> {
+  try {
+    // The "To Do" status was retired — fold any leftover tasks into "Pending".
+    // 'todo' is no longer part of the status union, so the filter is cast.
+    const { modifiedCount } = await Task.updateMany(
+      { status: 'todo' } as Record<string, unknown>,
+      { $set: { status: 'pending' } },
+    );
+    if (modifiedCount > 0) {
+      console.log(`Migrated ${modifiedCount} task(s) from "todo" to "pending".`);
+    }
+
+    // Workspaces created before per-workspace statuses need the built-in lists.
+    const seededTasks = await Workspace.updateMany(
+      { $or: [{ taskStatuses: { $exists: false } }, { taskStatuses: { $size: 0 } }] },
+      { $set: { taskStatuses: DEFAULT_TASK_STATUSES } },
+    );
+    const seededProjects = await Workspace.updateMany(
+      { $or: [{ projectStatuses: { $exists: false } }, { projectStatuses: { $size: 0 } }] },
+      { $set: { projectStatuses: DEFAULT_PROJECT_STATUSES } },
+    );
+    const seeded = Math.max(seededTasks.modifiedCount, seededProjects.modifiedCount);
+    if (seeded > 0) {
+      console.log(`Seeded built-in statuses for ${seeded} workspace(s).`);
+    }
+  } catch (err) {
+    console.error('Startup migration failed (continuing anyway):', (err as Error).message);
+  }
+}
+
 export async function connectDB(): Promise<void> {
   const uri = process.env.MONGODB_URI;
   if (!uri) {
@@ -67,6 +104,7 @@ export async function connectDB(): Promise<void> {
     try {
       await mongoose.connect(uri, { serverSelectionTimeoutMS: 5000 });
       console.log('Connected to MongoDB');
+      await runStartupMigrations();
       return;
     } catch (err) {
       const waitMs = Math.min(30_000, 1000 * 2 ** Math.min(attempt, 5));

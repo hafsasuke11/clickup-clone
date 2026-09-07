@@ -14,11 +14,23 @@ export interface WorkspaceMemberRaw {
   joinedAt: string;
 }
 
+export interface WorkspaceStatus {
+  key: string;
+  label: string;
+  color: string;
+  order: number;
+  builtIn: boolean;
+}
+
+export type StatusKind = 'task' | 'project';
+
 export interface Workspace {
   id: string;
   name: string;
   ownerId: string;
   members: WorkspaceMemberRaw[];
+  taskStatuses: WorkspaceStatus[];
+  projectStatuses: WorkspaceStatus[];
   createdAt: string;
 }
 
@@ -60,15 +72,26 @@ export interface ActivityEntry {
   target: User | null;
 }
 
+export type ProjectPriority = 'urgent' | 'high' | 'normal' | 'low';
+/** A workspace-defined status key (e.g. 'active', 'on_hold', or a custom one). */
+export type ProjectStatus = string;
+
 export interface Project {
   id: string;
   workspaceId: string;
   name: string;
+  description: string;
   color: string;
+  priority: ProjectPriority;
+  status: ProjectStatus;
+  startDate: string | null;
+  dueDate: string | null;
   createdBy: string;
+  createdAt: string;
 }
 
-export type TaskStatus = 'pending' | 'in_progress' | 'todo' | 'completed';
+/** A workspace-defined status key (e.g. 'pending', 'in_progress', 'completed', or a custom one). */
+export type TaskStatus = string;
 export type TaskPriority = 'urgent' | 'high' | 'normal' | 'low';
 
 export interface Task {

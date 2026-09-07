@@ -1,7 +1,23 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { useShallow } from 'zustand/react/shallow';
 import { apiClient } from '@/utils/api';
-import type { ActivityEntry, Member, PendingInvite, Workspace, WorkspaceRole } from '@/utils/types';
+import type {
+  ActivityEntry,
+  Member,
+  PendingInvite,
+  StatusKind,
+  Workspace,
+  WorkspaceRole,
+  WorkspaceStatus,
+} from '@/utils/types';
+import { useTaskStore } from './taskStore';
+import { useUiStore } from './uiStore';
+
+const STATUS_FIELD: Record<StatusKind, 'taskStatuses' | 'projectStatuses'> = {
+  task: 'taskStatuses',
+  project: 'projectStatuses',
+};
 
 interface WorkspaceStore {
   workspaces: Workspace[];
@@ -33,7 +49,23 @@ interface WorkspaceStore {
   deleteWorkspace: () => Promise<void>;
   fetchActivity: () => Promise<void>;
   clearActivity: () => Promise<void>;
+
+  addStatus: (kind: StatusKind, label: string, color: string) => Promise<void>;
+  updateStatus: (kind: StatusKind, key: string, patch: { label?: string; color?: string }) => Promise<void>;
+  deleteStatus: (kind: StatusKind, key: string) => Promise<void>;
+  reorderStatuses: (kind: StatusKind, keys: string[]) => Promise<void>;
+
   reset: () => void;
+}
+
+function applyStatuses(kind: StatusKind, statuses: WorkspaceStatus[]) {
+  const field = STATUS_FIELD[kind];
+  useWorkspaceStore.setState((s) => ({
+    workspace: s.workspace ? { ...s.workspace, [field]: statuses } : s.workspace,
+    workspaces: s.workspaces.map((w) =>
+      w.id === s.workspace?.id ? { ...w, [field]: statuses } : w,
+    ),
+  }));
 }
 
 export const useWorkspaceStore = create<WorkspaceStore>()(
@@ -199,6 +231,65 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         set({ activity: [] });
       },
 
+      addStatus: async (kind, label, color) => {
+        const ws = get().workspace;
+        if (!ws) return;
+        const { statuses } = await apiClient.post<{ statuses: WorkspaceStatus[] }>(
+          `/api/workspaces/${ws.id}/statuses/${kind}`,
+          { label, color },
+        );
+        applyStatuses(kind, statuses);
+        useUiStore.getState().addToast(`Status "${label}" added`, 'success');
+      },
+
+      updateStatus: async (kind, key, patch) => {
+        const ws = get().workspace;
+        if (!ws) return;
+        const { statuses } = await apiClient.patch<{ statuses: WorkspaceStatus[] }>(
+          `/api/workspaces/${ws.id}/statuses/${kind}/${key}`,
+          patch,
+        );
+        applyStatuses(kind, statuses);
+      },
+
+      deleteStatus: async (kind, key) => {
+        const ws = get().workspace;
+        if (!ws) return;
+        const { statuses, reassigned } = await apiClient.del<{ statuses: WorkspaceStatus[]; reassigned: number }>(
+          `/api/workspaces/${ws.id}/statuses/${kind}/${key}`,
+        );
+        applyStatuses(kind, statuses);
+        // The server moved affected items onto the fallback status — refresh them.
+        if (kind === 'task') void useTaskStore.getState().fetchTasks(ws.id);
+        else void useTaskStore.getState().fetchProjects(ws.id);
+        useUiStore.getState().addToast(
+          reassigned > 0 ? `Status deleted — ${reassigned} item(s) moved` : 'Status deleted',
+          'info',
+        );
+      },
+
+      reorderStatuses: async (kind, keys) => {
+        const ws = get().workspace;
+        if (!ws) return;
+        const field = STATUS_FIELD[kind];
+        const prev = ws[field];
+        // Optimistic: reorder locally right away.
+        const reordered = [...prev].sort((a, b) => keys.indexOf(a.key) - keys.indexOf(b.key))
+          .map((s, i) => ({ ...s, order: i }));
+        applyStatuses(kind, reordered);
+        try {
+          const { statuses } = await apiClient.put<{ statuses: WorkspaceStatus[] }>(
+            `/api/workspaces/${ws.id}/statuses/${kind}/reorder`,
+            { keys },
+          );
+          applyStatuses(kind, statuses);
+        } catch (err) {
+          applyStatuses(kind, prev);
+          useUiStore.getState().addToast('Failed to reorder statuses', 'error');
+          console.error('reorderStatuses error:', err);
+        }
+      },
+
       reset: () =>
         set({
           workspaces: [],
@@ -224,5 +315,47 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
     },
   ),
 );
+
+const FALLBACK_TASK_STATUSES: WorkspaceStatus[] = [
+  { key: 'pending', label: 'Pending', color: '#64748B', order: 0, builtIn: true },
+  { key: 'in_progress', label: 'In Progress', color: '#3B82F6', order: 1, builtIn: true },
+  { key: 'completed', label: 'Completed', color: '#22C55E', order: 2, builtIn: true },
+];
+const FALLBACK_PROJECT_STATUSES: WorkspaceStatus[] = [
+  { key: 'active', label: 'Active', color: '#3B82F6', order: 0, builtIn: true },
+  { key: 'on_hold', label: 'On Hold', color: '#F59E0B', order: 1, builtIn: true },
+  { key: 'completed', label: 'Completed', color: '#22C55E', order: 2, builtIn: true },
+];
+
+const sortByOrder = (list: WorkspaceStatus[]) => [...list].sort((a, b) => a.order - b.order);
+
+/** Sorted task statuses for the active workspace (falls back to built-ins). */
+export function useTaskStatuses(): WorkspaceStatus[] {
+  return useWorkspaceStore(
+    useShallow((s) =>
+      s.workspace?.taskStatuses?.length ? sortByOrder(s.workspace.taskStatuses) : FALLBACK_TASK_STATUSES,
+    ),
+  );
+}
+
+/** Sorted project statuses for the active workspace (falls back to built-ins). */
+export function useProjectStatuses(): WorkspaceStatus[] {
+  return useWorkspaceStore(
+    useShallow((s) =>
+      s.workspace?.projectStatuses?.length ? sortByOrder(s.workspace.projectStatuses) : FALLBACK_PROJECT_STATUSES,
+    ),
+  );
+}
+
+/** Sorted statuses for the given kind — `kind` is an argument, not a conditional hook. */
+export function useStatuses(kind: StatusKind): WorkspaceStatus[] {
+  return useWorkspaceStore(
+    useShallow((s) => {
+      const list = kind === 'task' ? s.workspace?.taskStatuses : s.workspace?.projectStatuses;
+      if (list?.length) return sortByOrder(list);
+      return kind === 'task' ? FALLBACK_TASK_STATUSES : FALLBACK_PROJECT_STATUSES;
+    }),
+  );
+}
 
 export type { WorkspaceRole };

@@ -3,6 +3,10 @@ import { apiClient } from '@/utils/api';
 import { useUiStore } from './uiStore';
 import type { Project, Task, TaskPriority, TaskStatus } from '@/utils/types';
 
+export type ProjectInput = Partial<Omit<Project, 'id' | 'workspaceId' | 'createdBy' | 'createdAt'>> & {
+  name: string;
+};
+
 export type TaskSortKey = 'name' | 'dueDate' | 'priority' | 'created';
 
 const PRIORITY_RANK: Record<TaskPriority, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
@@ -45,7 +49,9 @@ interface TaskStore {
   updateTask: (workspaceId: string, taskId: string, patch: Partial<Task>) => Promise<void>;
   deleteTask: (workspaceId: string, taskId: string) => Promise<void>;
 
-  createProject: (workspaceId: string, name: string, color?: string) => Promise<Project>;
+  createProject: (workspaceId: string, data: ProjectInput) => Promise<Project>;
+  updateProject: (workspaceId: string, projectId: string, patch: Partial<ProjectInput>) => Promise<void>;
+  deleteProject: (workspaceId: string, projectId: string) => Promise<void>;
 
   filterPriorities: TaskPriority[];
   toggleFilterPriority: (p: TaskPriority) => void;
@@ -115,10 +121,40 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
     }
   },
 
-  createProject: async (workspaceId, name, color) => {
-    const { project } = await apiClient.post<{ project: Project }>(`/api/workspaces/${workspaceId}/projects`, { name, color });
+  createProject: async (workspaceId, data) => {
+    const { project } = await apiClient.post<{ project: Project }>(`/api/workspaces/${workspaceId}/projects`, data);
     set((s) => ({ projects: [...s.projects, project] }));
     return project;
+  },
+
+  updateProject: async (workspaceId, projectId, patch) => {
+    const prev = get().projects.find((p) => p.id === projectId);
+    set((s) => ({ projects: s.projects.map((p) => (p.id === projectId ? { ...p, ...patch } : p)) }));
+    try {
+      const { project } = await apiClient.patch<{ project: Project }>(`/api/workspaces/${workspaceId}/projects/${projectId}`, patch);
+      set((s) => ({ projects: s.projects.map((p) => (p.id === projectId ? project : p)) }));
+    } catch (err) {
+      if (prev) set((s) => ({ projects: s.projects.map((p) => (p.id === projectId ? prev : p)) }));
+      useUiStore.getState().addToast('Failed to update project', 'error');
+      console.error('updateProject error:', err);
+    }
+  },
+
+  deleteProject: async (workspaceId, projectId) => {
+    const prevProjects = get().projects;
+    const prevTasks = get().tasks;
+    set((s) => ({
+      projects: s.projects.filter((p) => p.id !== projectId),
+      tasks: s.tasks.map((t) => (t.projectId === projectId ? { ...t, projectId: null } : t)),
+    }));
+    try {
+      await apiClient.del(`/api/workspaces/${workspaceId}/projects/${projectId}`);
+      useUiStore.getState().addToast('Project deleted', 'info');
+    } catch (err) {
+      set({ projects: prevProjects, tasks: prevTasks });
+      useUiStore.getState().addToast('Failed to delete project', 'error');
+      console.error('deleteProject error:', err);
+    }
   },
 
   filterPriorities: [],

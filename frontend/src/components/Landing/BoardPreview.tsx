@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion';
 import { Calendar } from 'lucide-react';
-import { STATUS_META } from '@/components/TaskStatusPill';
+import { DEFAULT_TASK_STATUS_META } from '@/components/TaskStatusPill';
 
 const priorityColors: Record<string, string> = {
   urgent: 'text-red-700 bg-red-50 border-red-200',
@@ -10,7 +10,7 @@ const priorityColors: Record<string, string> = {
 
 const columns = [
   {
-    status: 'todo' as const,
+    status: 'pending' as const,
     tasks: [
       { name: 'Dashboard chart widgets', priority: 'high', due: 'Aug 4', initials: 'JS', color: 'bg-purple-500' },
       { name: 'Polish list empty states', priority: 'normal', due: null, initials: 'AK', color: 'bg-blue-500' },
@@ -82,12 +82,12 @@ export default function BoardPreview() {
       </div>
       <div className="flex gap-3 p-4 overflow-x-auto">
         {columns.map((col) => {
-          const meta = STATUS_META[col.status];
+          const meta = DEFAULT_TASK_STATUS_META[col.status];
           return (
             <div key={col.status} className="flex-1 min-w-[150px]">
               <div className="flex items-center gap-1.5 mb-2.5">
-                <span className={`w-1.5 h-1.5 rounded-full ${meta.dot}`} />
-                <span className={`text-[10px] font-semibold ${meta.text}`}>{meta.label}</span>
+                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: meta.color }} />
+                <span className="text-[10px] font-semibold" style={{ color: meta.color }}>{meta.label}</span>
                 <span className="text-[9px] text-text-disabled ml-auto">{col.tasks.length}</span>
               </div>
               <div className="space-y-2">

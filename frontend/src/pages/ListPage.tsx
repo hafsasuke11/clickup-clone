@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Plus, ChevronDown, ChevronRight, CheckSquare } from 'lucide-react';
 import { useTaskStore, getVisibleTasks } from '@/store/taskStore';
-import { useWorkspaceStore } from '@/store/workspaceStore';
+import { useWorkspaceStore, useTaskStatuses } from '@/store/workspaceStore';
 import { useUiStore } from '@/store/uiStore';
 import { FilterButton, AssigneeButton, SortButton } from '@/components/TaskToolbar';
-import { StatusPill, STATUS_META, TASK_STATUS_ORDER } from '@/components/TaskStatusPill';
+import { StatusPill, StatusSelect } from '@/components/TaskStatusPill';
+import { AddStatusButton, StatusColumnMenu } from '@/components/StatusManager';
 import { initialsOf, colorFor } from '@/utils/avatarHelpers';
 import type { TaskPriority, TaskStatus } from '@/utils/types';
 
@@ -33,8 +34,9 @@ function EmptyState() {
 
 export default function ListPage() {
   const store = useTaskStore();
-  const { tasks, createTask } = store;
+  const { tasks, createTask, updateTask } = store;
   const { workspace, members } = useWorkspaceStore();
+  const statuses = useTaskStatuses();
   const { setSelectedTaskId } = useUiStore();
   const visibleTasks = getVisibleTasks(store);
   const [addingIn, setAddingIn] = useState<TaskStatus | null>(null);
@@ -56,28 +58,34 @@ export default function ListPage() {
           <SortButton />
           <FilterButton />
           <AssigneeButton />
+          <AddStatusButton kind="task" />
         </div>
       </div>
 
       {tasks.length === 0 ? <EmptyState /> : (
       <div className="flex-1 overflow-y-auto p-5 space-y-5">
-        {TASK_STATUS_ORDER.map((status) => {
+        {statuses.map((s) => {
+          const status = s.key;
           const grouped = visibleTasks.filter((t) => t.status === status);
           const isCollapsed = collapsed.has(status);
           return (
             <div key={status}>
-              <div className="flex items-center gap-2 mb-2.5">
+              <div className="flex items-center gap-2 mb-2.5 group">
                 <button onClick={() => toggleCollapsed(status)} className="text-text-secondary hover:text-text-primary transition-colors">
                   {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                 </button>
-                <StatusPill status={status} />
+                <StatusPill statuses={statuses} status={status} />
                 <span className="text-xs text-text-secondary bg-black/[0.04] px-2 py-0.5 rounded-full font-semibold tabular-nums">{grouped.length}</span>
+                <span className="opacity-0 group-hover:opacity-100 transition-opacity">
+                  <StatusColumnMenu kind="task" statusKey={status} align="left" />
+                </span>
               </div>
               {!isCollapsed && (
-                <div className={`bg-surface border border-border border-t-2 ${STATUS_META[status].topBorder} rounded-xl overflow-hidden`}>
+                <div className="bg-surface border border-border rounded-xl overflow-hidden" style={{ borderTopColor: s.color, borderTopWidth: 2 }}>
                   <div className="grid grid-cols-12 gap-3 px-4 py-2 text-xs text-text-secondary font-semibold uppercase tracking-wider border-b border-border">
-                    <div className="col-span-5">Name</div><div className="col-span-2">Assignee</div>
-                    <div className="col-span-2">Due Date</div><div className="col-span-3">Priority</div>
+                    <div className="col-span-4">Name</div><div className="col-span-2">Status</div>
+                    <div className="col-span-2">Assignee</div><div className="col-span-2">Due Date</div>
+                    <div className="col-span-2">Priority</div>
                   </div>
                   {grouped.map((task) => {
                     const due = task.dueDate ? new Date(task.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : null;
@@ -85,9 +93,14 @@ export default function ListPage() {
                     return (
                       <div key={task.id} onClick={() => setSelectedTaskId(task.id)}
                         className="grid grid-cols-12 gap-3 px-4 py-3 border-b border-border last:border-0 hover:bg-black/[0.02] transition-colors items-center cursor-pointer">
-                        <div className="col-span-5 flex items-center gap-2.5 min-w-0">
+                        <div className="col-span-4 flex items-center gap-2.5 min-w-0">
                           <CheckSquare size={13} className={task.status === 'completed' ? 'text-accent-green' : 'text-text-disabled'} />
                           <span className={`text-sm truncate ${task.status === 'completed' ? 'line-through text-text-disabled' : 'text-text-primary'}`}>{task.name}</span>
+                        </div>
+                        <div className="col-span-2">
+                          {workspace && (
+                            <StatusSelect statuses={statuses} status={task.status} size="sm" onChange={(s) => updateTask(workspace.id, task.id, { status: s })} />
+                          )}
                         </div>
                         <div className="col-span-2">
                           {task.assigneeId ? (
@@ -102,7 +115,7 @@ export default function ListPage() {
                         <div className="col-span-2">
                           {due ? <span className={`text-xs ${overdue ? 'text-accent-red' : 'text-text-secondary'}`}>{due}</span> : <span className="text-xs text-text-disabled">—</span>}
                         </div>
-                        <div className="col-span-3">
+                        <div className="col-span-2">
                           <span className={`text-xs px-2 py-0.5 rounded-full border font-medium capitalize ${priorityColors[task.priority]}`}>{task.priority}</span>
                         </div>
                       </div>

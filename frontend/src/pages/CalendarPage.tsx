@@ -16,6 +16,7 @@ export default function CalendarPage() {
   const store = useTaskStore();
   const { setSelectedTaskId, setCreateModalOpen, setCreateModalDueDate } = useUiStore();
   const tasks = getVisibleTasks(store);
+  const projectById = new Map(store.projects.map((p) => [p.id, p]));
   const today = new Date();
   const [current, setCurrent] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
 
@@ -93,13 +94,21 @@ export default function CalendarPage() {
                       {cell.date.getDate()}
                     </div>
                     <div className="space-y-0.5">
-                      {cellTasks.slice(0, 3).map((t) => (
-                        <button key={t.id} onClick={() => setSelectedTaskId(t.id)}
-                          className="w-full flex items-center gap-1 px-1.5 py-0.5 rounded text-left hover:opacity-80 transition-opacity bg-accent-purple/10">
-                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${priorityDot[t.priority]}`} />
-                          <span className="text-[11px] text-text-primary truncate">{t.name}</span>
-                        </button>
-                      ))}
+                      {cellTasks.slice(0, 3).map((t) => {
+                        const project = t.projectId ? projectById.get(t.projectId) : undefined;
+                        return (
+                          <button key={t.id} onClick={() => setSelectedTaskId(t.id)}
+                            title={project ? `${t.name} · ${project.name}` : t.name}
+                            style={project ? { borderLeft: `2px solid ${project.color}` } : undefined}
+                            className="w-full flex items-center gap-1 px-1.5 py-0.5 rounded text-left hover:opacity-80 transition-opacity bg-accent-purple/10">
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${priorityDot[t.priority]}`} />
+                            <span className="text-[11px] text-text-primary truncate">
+                              {t.name}
+                              {project && <span className="text-text-secondary"> · {project.name}</span>}
+                            </span>
+                          </button>
+                        );
+                      })}
                       {cellTasks.length > 3 && (
                         <p className="text-[10px] text-text-secondary px-1">+{cellTasks.length - 3} more</p>
                       )}

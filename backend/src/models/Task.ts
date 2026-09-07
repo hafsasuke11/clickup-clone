@@ -1,7 +1,8 @@
 import { Schema, model } from 'mongoose';
 import { docToJSON } from '../utils/serialize.js';
 
-export const TASK_STATUSES = ['pending', 'in_progress', 'todo', 'completed'] as const;
+// Statuses are defined per-workspace (workspace.taskStatuses), so `status` is a
+// free string here and validated against the workspace's list in the routes.
 export const TASK_PRIORITIES = ['urgent', 'high', 'normal', 'low'] as const;
 
 const taskSchema = new Schema(
@@ -10,7 +11,7 @@ const taskSchema = new Schema(
     projectId: { type: Schema.Types.ObjectId, ref: 'Project', default: null },
     name: { type: String, required: true, trim: true },
     description: { type: String, default: '' },
-    status: { type: String, enum: TASK_STATUSES, default: 'pending' },
+    status: { type: String, default: 'pending' },
     priority: { type: String, enum: TASK_PRIORITIES, default: 'normal' },
     dueDate: { type: Date, default: null },
     assigneeId: { type: Schema.Types.ObjectId, ref: 'User', default: null },

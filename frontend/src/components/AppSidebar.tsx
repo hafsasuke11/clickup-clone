@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { ListTodo, Calendar, LayoutDashboard, Kanban, Users, UserPlus, LogOut, ChevronLeft, ChevronRight, ChevronDown, Check, Plus } from 'lucide-react';
+import { ListTodo, Calendar, LayoutDashboard, Kanban, FolderKanban, Users, UserPlus, LogOut, ChevronLeft, ChevronRight, ChevronDown, Check, Plus } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 import { useUiStore } from '@/store/uiStore';
@@ -10,7 +10,8 @@ const NAV_ITEMS = [
   { to: '/app/list', label: 'List', icon: ListTodo },
   { to: '/app/calendar', label: 'Calendar', icon: Calendar },
   { to: '/app/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/app/board', label: 'Kanban', icon: Kanban },
+  { to: '/app/board', label: 'Board', icon: Kanban },
+  { to: '/app/projects', label: 'Projects', icon: FolderKanban },
   { to: '/app/users', label: 'Users', icon: Users },
 ];
 

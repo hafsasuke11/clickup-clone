@@ -1,5 +1,6 @@
 import { Router, type Request } from 'express';
-import { Task, TASK_PRIORITIES, TASK_STATUSES } from '../models/Task.js';
+import { Task, TASK_PRIORITIES } from '../models/Task.js';
+import { isValidStatus } from '../services/statusService.js';
 
 type WorkspaceParams = { workspaceId: string };
 type TaskParams = { workspaceId: string; taskId: string };
@@ -26,7 +27,7 @@ router.post('/', async (req: Request<WorkspaceParams>, res) => {
   if (!name?.trim()) {
     return res.status(400).json({ error: 'Task name is required.' });
   }
-  if (status && !TASK_STATUSES.includes(status)) {
+  if (status && !(await isValidStatus(req.params.workspaceId, 'task', status))) {
     return res.status(400).json({ error: 'Invalid status.' });
   }
   if (priority && !TASK_PRIORITIES.includes(priority)) {
@@ -56,7 +57,7 @@ router.get('/:taskId', async (req: Request<TaskParams>, res) => {
 router.patch('/:taskId', async (req: Request<TaskParams>, res) => {
   const { name, description, status, priority, dueDate, assigneeId, projectId } = req.body ?? {};
 
-  if (status && !TASK_STATUSES.includes(status)) {
+  if (status && !(await isValidStatus(req.params.workspaceId, 'task', status))) {
     return res.status(400).json({ error: 'Invalid status.' });
   }
   if (priority && !TASK_PRIORITIES.includes(priority)) {

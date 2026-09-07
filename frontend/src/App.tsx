@@ -6,6 +6,7 @@ import AppShell from '@/components/AppShell';
 import DashboardPage from '@/pages/DashboardPage';
 import ListPage from '@/pages/ListPage';
 import KanbanPage from '@/pages/KanbanPage';
+import ProjectsPage from '@/pages/ProjectsPage';
 import CalendarPage from '@/pages/CalendarPage';
 import UsersPage from '@/pages/UsersPage';
 import { ProtectedRoute, GuestRoute } from '@/utils/authGuards';
@@ -24,6 +25,7 @@ function App() {
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="list" element={<ListPage />} />
           <Route path="board" element={<KanbanPage />} />
+          <Route path="projects" element={<ProjectsPage />} />
           <Route path="calendar" element={<CalendarPage />} />
           <Route path="users" element={<UsersPage />} />
         </Route>
