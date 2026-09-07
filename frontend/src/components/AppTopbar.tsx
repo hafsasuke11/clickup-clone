@@ -9,6 +9,8 @@ const PAGE_TITLES: Record<string, string> = {
   '/app/projects': 'Projects',
   '/app/calendar': 'Calendar',
   '/app/users': 'Users',
+  '/app/activity': 'Activity',
+  '/app/profile': 'Profile',
 };
 
 // Task creation lives contextually per page (Kanban's toolbar, List's inline

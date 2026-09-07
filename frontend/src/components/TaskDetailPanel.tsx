@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { X, Trash2, Calendar, AlignLeft, Tag, User, ChevronDown, FolderKanban } from 'lucide-react';
+import { X, Trash2, Calendar, AlignLeft, Tag, User, ChevronDown, FolderKanban, Lock } from 'lucide-react';
 import { useTaskStore } from '@/store/taskStore';
 import { useWorkspaceStore, useTaskStatuses } from '@/store/workspaceStore';
 import { useUiStore } from '@/store/uiStore';
+import { useCan } from '@/utils/permissions';
 import type { TaskPriority } from '@/utils/types';
-import { StatusSelect } from './TaskStatusPill';
+import { StatusSelect, StatusPill } from './TaskStatusPill';
 
 const priorityOptions: { value: TaskPriority; label: string; color: string }[] = [
   { value: 'urgent', label: 'Urgent', color: 'text-red-600' },
@@ -17,9 +18,17 @@ function initialsOf(name: string) {
   return name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase();
 }
 
-function PriorityBadge({ priority, onChange }: { priority: TaskPriority; onChange: (p: TaskPriority) => void }) {
+function PriorityBadge({ priority, onChange, disabled }: { priority: TaskPriority; onChange: (p: TaskPriority) => void; disabled?: boolean }) {
   const [open, setOpen] = useState(false);
   const cur = priorityOptions.find((o) => o.value === priority)!;
+  if (disabled) {
+    return (
+      <span className="flex items-center gap-2 px-3 py-1.5 bg-surface border border-border rounded-lg text-sm">
+        <Tag size={13} className={cur.color} />
+        <span className="text-text-primary capitalize">{cur.label}</span>
+      </span>
+    );
+  }
   return (
     <div className="relative">
       <button onClick={() => setOpen((v) => !v)} className="flex items-center gap-2 px-3 py-1.5 bg-surface border border-border rounded-lg text-sm hover:border-accent-purple/50 transition-colors">
@@ -44,10 +53,21 @@ function PriorityBadge({ priority, onChange }: { priority: TaskPriority; onChang
   );
 }
 
-function AssigneeBadge({ assigneeId, onChange }: { assigneeId: string | null; onChange: (id: string | null) => void }) {
+function AssigneeBadge({ assigneeId, onChange, disabled }: { assigneeId: string | null; onChange: (id: string | null) => void; disabled?: boolean }) {
   const [open, setOpen] = useState(false);
   const { members } = useWorkspaceStore();
   const current = members.find((m) => m.userId === assigneeId);
+
+  if (disabled) {
+    return (
+      <span className="flex items-center gap-2 px-3 py-1.5 bg-surface border border-border rounded-lg text-sm">
+        {current?.user
+          ? <div className="w-5 h-5 rounded-full bg-accent-purple flex items-center justify-center text-[9px] font-bold text-white">{initialsOf(current.user.fullName)}</div>
+          : <User size={13} className="text-text-secondary" />}
+        <span className="text-text-primary">{current?.user?.fullName ?? 'Unassigned'}</span>
+      </span>
+    );
+  }
 
   return (
     <div className="relative">
@@ -86,6 +106,9 @@ export default function TaskDetailPanel() {
   const { workspace, members } = useWorkspaceStore();
   const taskStatuses = useTaskStatuses();
   const { selectedTaskId, setSelectedTaskId } = useUiStore();
+  const canEdit = useCan('manageTasks');
+  const canAssign = useCan('assignTasks');
+  const canDelete = useCan('deleteItems');
   const task = tasks.find((t) => t.id === selectedTaskId);
   const [name, setName] = useState('');
   const [desc, setDesc] = useState('');
@@ -113,9 +136,11 @@ export default function TaskDetailPanel() {
         <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
           <span className="text-xs text-text-secondary bg-background border border-border px-2 py-0.5 rounded-full">Task</span>
           <div className="flex items-center gap-1">
-            <button onClick={handleDelete} className="p-1.5 text-text-secondary hover:text-accent-red hover:bg-accent-red/10 rounded-lg transition-colors" title="Delete task">
-              <Trash2 size={15} />
-            </button>
+            {canDelete && (
+              <button onClick={handleDelete} className="p-1.5 text-text-secondary hover:text-accent-red hover:bg-accent-red/10 rounded-lg transition-colors" title="Delete task">
+                <Trash2 size={15} />
+              </button>
+            )}
             <button onClick={() => setSelectedTaskId(null)} className="p-1.5 text-text-secondary hover:text-text-primary hover:bg-black/[0.03] rounded-lg transition-colors">
               <X size={15} />
             </button>
@@ -123,29 +148,44 @@ export default function TaskDetailPanel() {
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onBlur={() => name.trim() && save({ name: name.trim() })}
-            className="w-full text-lg font-semibold text-text-primary bg-transparent border-b border-transparent focus:border-accent-purple/50 focus:outline-none pb-1 transition-colors placeholder:text-text-secondary"
-            placeholder="Task name"
-          />
+          {!canEdit && (
+            <p className="flex items-center gap-1.5 text-[11px] text-text-secondary bg-black/[0.03] rounded-lg px-2.5 py-1.5">
+              <Lock size={11} /> Read-only — ask the workspace owner for edit access.
+            </p>
+          )}
+          {canEdit ? (
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={() => name.trim() && save({ name: name.trim() })}
+              className="w-full text-lg font-semibold text-text-primary bg-transparent border-b border-transparent focus:border-accent-purple/50 focus:outline-none pb-1 transition-colors placeholder:text-text-secondary"
+              placeholder="Task name"
+            />
+          ) : (
+            <h2 className="w-full text-lg font-semibold text-text-primary pb-1 break-words">{task.name}</h2>
+          )}
 
           <div className="flex items-center gap-2 flex-wrap">
-            <StatusSelect statuses={taskStatuses} status={task.status} onChange={(s) => save({ status: s })} />
-            <PriorityBadge priority={task.priority} onChange={(p) => save({ priority: p })} />
+            {canEdit
+              ? <StatusSelect statuses={taskStatuses} status={task.status} onChange={(s) => save({ status: s })} />
+              : <StatusPill statuses={taskStatuses} status={task.status} />}
+            <PriorityBadge priority={task.priority} onChange={(p) => save({ priority: p })} disabled={!canEdit} />
           </div>
 
           <div className="flex items-center gap-3">
             <Calendar size={15} className="text-text-secondary shrink-0" />
             <div className="flex-1">
               <p className="text-xs text-text-secondary mb-1">Due Date</p>
-              <input
-                type="date"
-                value={formattedDate}
-                onChange={(e) => save({ dueDate: e.target.value || null })}
-                className="bg-background border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent-purple transition-colors"
-              />
+              {canEdit ? (
+                <input
+                  type="date"
+                  value={formattedDate}
+                  onChange={(e) => save({ dueDate: e.target.value || null })}
+                  className="bg-background border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent-purple transition-colors"
+                />
+              ) : (
+                <p className="text-sm text-text-primary">{formattedDate || <span className="text-text-disabled">None</span>}</p>
+              )}
             </div>
           </div>
 
@@ -153,7 +193,7 @@ export default function TaskDetailPanel() {
             <User size={15} className="text-text-secondary shrink-0" />
             <div className="flex-1">
               <p className="text-xs text-text-secondary mb-1">Assignee</p>
-              <AssigneeBadge assigneeId={task.assigneeId} onChange={(id) => save({ assigneeId: id })} />
+              <AssigneeBadge assigneeId={task.assigneeId} onChange={(id) => save({ assigneeId: id })} disabled={!canAssign} />
             </div>
           </div>
 
@@ -161,14 +201,20 @@ export default function TaskDetailPanel() {
             <FolderKanban size={15} className="text-text-secondary shrink-0" />
             <div className="flex-1">
               <p className="text-xs text-text-secondary mb-1">Project</p>
-              <select
-                value={task.projectId ?? ''}
-                onChange={(e) => save({ projectId: e.target.value || null })}
-                className="bg-background border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent-purple transition-colors"
-              >
-                <option value="">No project</option>
-                {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
+              {canEdit ? (
+                <select
+                  value={task.projectId ?? ''}
+                  onChange={(e) => save({ projectId: e.target.value || null })}
+                  className="bg-background border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent-purple transition-colors"
+                >
+                  <option value="">No project</option>
+                  {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              ) : (
+                <p className="text-sm text-text-primary">
+                  {projects.find((p) => p.id === task.projectId)?.name ?? <span className="text-text-disabled">No project</span>}
+                </p>
+              )}
             </div>
           </div>
 
@@ -177,14 +223,20 @@ export default function TaskDetailPanel() {
               <AlignLeft size={15} className="text-text-secondary" />
               <p className="text-xs text-text-secondary">Description</p>
             </div>
-            <textarea
-              value={desc}
-              onChange={(e) => setDesc(e.target.value)}
-              onBlur={() => save({ description: desc })}
-              rows={5}
-              placeholder="Add a description..."
-              className="w-full bg-background border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-accent-purple transition-colors resize-none"
-            />
+            {canEdit ? (
+              <textarea
+                value={desc}
+                onChange={(e) => setDesc(e.target.value)}
+                onBlur={() => save({ description: desc })}
+                rows={5}
+                placeholder="Add a description..."
+                className="w-full bg-background border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-accent-purple transition-colors resize-none"
+              />
+            ) : (
+              <p className="w-full text-sm text-text-primary whitespace-pre-wrap break-words">
+                {task.description || <span className="text-text-disabled">No description</span>}
+              </p>
+            )}
           </div>
 
           <div className="text-xs text-text-secondary space-y-1 pt-2 border-t border-border">

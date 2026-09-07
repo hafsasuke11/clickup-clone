@@ -23,7 +23,7 @@ export default function ProjectModal({ project, onClose }: { project?: Project |
   const [description, setDescription] = useState(project?.description ?? '');
   const [color, setColor] = useState(project?.color ?? COLORS[0]);
   const [priority, setPriority] = useState<ProjectPriority>(project?.priority ?? 'normal');
-  const [status, setStatus] = useState<ProjectStatus>(project?.status ?? 'active');
+  const [status, setStatus] = useState<ProjectStatus>(project?.status ?? projectStatuses[0]?.key ?? 'pending');
   const [startDate, setStartDate] = useState(toDateInput(project?.startDate ?? null));
   const [dueDate, setDueDate] = useState(toDateInput(project?.dueDate ?? null));
   const [saving, setSaving] = useState(false);
@@ -45,7 +45,8 @@ export default function ProjectModal({ project, onClose }: { project?: Project |
         await updateProject(workspace.id, project.id, payload);
         addToast(`Project "${payload.name}" updated`, 'success');
       } else {
-        await createProject(workspace.id, payload);
+        const created = await createProject(workspace.id, payload);
+        if (!created) { setSaving(false); return; } // blocked — store already explained
         addToast(`Project "${payload.name}" created`, 'success');
       }
       onClose();

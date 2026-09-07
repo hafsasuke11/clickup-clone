@@ -5,6 +5,7 @@ import { apiClient } from '@/utils/api';
 import type {
   ActivityEntry,
   Member,
+  MemberPermissions,
   PendingInvite,
   StatusKind,
   Workspace,
@@ -41,9 +42,8 @@ interface WorkspaceStore {
   renameWorkspace: (name: string) => Promise<void>;
   addMember: (
     email: string,
-    role?: 'admin' | 'member',
   ) => Promise<{ status: 'added' | 'invited'; emailSent?: boolean; inviteUrl?: string }>;
-  updateMemberRole: (userId: string, role: 'admin' | 'member') => Promise<void>;
+  updateMemberPermissions: (userId: string, permissions: Partial<MemberPermissions>) => Promise<void>;
   removeMember: (userId: string) => Promise<void>;
   transferOwnership: (userId: string) => Promise<void>;
   deleteWorkspace: () => Promise<void>;
@@ -158,14 +158,14 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         }));
       },
 
-      addMember: async (email, role) => {
+      addMember: async (email) => {
         const ws = get().workspace;
         if (!ws) return { status: 'invited' as const };
         const res = await apiClient.post<{
           status: 'added' | 'invited';
           emailSent?: boolean;
           invite?: { inviteUrl?: string };
-        }>(`/api/workspaces/${ws.id}/members`, { email, role });
+        }>(`/api/workspaces/${ws.id}/members`, { email });
         if (res.status === 'added') {
           await get().fetchMembers();
         } else {
@@ -174,10 +174,10 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         return { status: res.status, emailSent: res.emailSent, inviteUrl: res.invite?.inviteUrl };
       },
 
-      updateMemberRole: async (userId, role) => {
+      updateMemberPermissions: async (userId, permissions) => {
         const ws = get().workspace;
         if (!ws) return;
-        await apiClient.patch(`/api/workspaces/${ws.id}/members/${userId}`, { role });
+        await apiClient.patch(`/api/workspaces/${ws.id}/members/${userId}/permissions`, { permissions });
         await get().fetchMembers();
       },
 
@@ -322,8 +322,8 @@ const FALLBACK_TASK_STATUSES: WorkspaceStatus[] = [
   { key: 'completed', label: 'Completed', color: '#22C55E', order: 2, builtIn: true },
 ];
 const FALLBACK_PROJECT_STATUSES: WorkspaceStatus[] = [
-  { key: 'active', label: 'Active', color: '#3B82F6', order: 0, builtIn: true },
-  { key: 'on_hold', label: 'On Hold', color: '#F59E0B', order: 1, builtIn: true },
+  { key: 'pending', label: 'Pending', color: '#64748B', order: 0, builtIn: true },
+  { key: 'in_progress', label: 'In Progress', color: '#3B82F6', order: 1, builtIn: true },
   { key: 'completed', label: 'Completed', color: '#22C55E', order: 2, builtIn: true },
 ];
 

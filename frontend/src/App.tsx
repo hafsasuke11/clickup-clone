@@ -9,6 +9,8 @@ import KanbanPage from '@/pages/KanbanPage';
 import ProjectsPage from '@/pages/ProjectsPage';
 import CalendarPage from '@/pages/CalendarPage';
 import UsersPage from '@/pages/UsersPage';
+import ActivityPage from '@/pages/ActivityPage';
+import ProfilePage from '@/pages/ProfilePage';
 import { ProtectedRoute, GuestRoute } from '@/utils/authGuards';
 
 function App() {
@@ -27,7 +29,9 @@ function App() {
           <Route path="board" element={<KanbanPage />} />
           <Route path="projects" element={<ProjectsPage />} />
           <Route path="calendar" element={<CalendarPage />} />
+          <Route path="activity" element={<ActivityPage />} />
           <Route path="users" element={<UsersPage />} />
+          <Route path="profile" element={<ProfilePage />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

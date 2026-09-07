@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { Workspace } from '../models/Workspace.js';
+import { effectivePermissions } from '../services/permissions.js';
 
 export async function requireWorkspaceMember(req: Request, res: Response, next: NextFunction) {
   const { workspaceId } = req.params;
@@ -15,7 +16,9 @@ export async function requireWorkspaceMember(req: Request, res: Response, next: 
       return res.status(403).json({ error: 'You are not a member of this workspace' });
     }
 
-    req.workspaceRole = membership.role as 'owner' | 'admin' | 'member';
+    // Any non-owner role is treated as a plain member.
+    req.workspaceRole = membership.role === 'owner' ? 'owner' : 'member';
+    req.workspacePermissions = effectivePermissions(membership);
     next();
   } catch {
     res.status(404).json({ error: 'Workspace not found' });

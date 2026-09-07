@@ -5,6 +5,7 @@
  */
 import mongoose from 'mongoose';
 import { Task } from './models/Task.js';
+import { Project } from './models/Project.js';
 import { Workspace } from './models/Workspace.js';
 import { DEFAULT_PROJECT_STATUSES, DEFAULT_TASK_STATUSES } from './models/statusDefaults.js';
 
@@ -80,6 +81,51 @@ async function runStartupMigrations(): Promise<void> {
     const seeded = Math.max(seededTasks.modifiedCount, seededProjects.modifiedCount);
     if (seeded > 0) {
       console.log(`Seeded built-in statuses for ${seeded} workspace(s).`);
+    }
+
+    // Project statuses were re-based from Active / On Hold / Completed to
+    // Pending / In Progress / Completed. Reset any workspace still on the old
+    // built-ins and remap the projects that used them.
+    const staleWorkspaces = await Workspace.find({
+      'projectStatuses.key': { $in: ['active', 'on_hold'] },
+    }).select('_id');
+    if (staleWorkspaces.length > 0) {
+      await Workspace.updateMany(
+        { _id: { $in: staleWorkspaces.map((w) => w._id) } },
+        { $set: { projectStatuses: DEFAULT_PROJECT_STATUSES } },
+      );
+      console.log(`Rebased project statuses for ${staleWorkspaces.length} workspace(s).`);
+    }
+    await Project.updateMany({ status: 'active' }, { $set: { status: 'pending' } });
+    await Project.updateMany({ status: 'on_hold' }, { $set: { status: 'in_progress' } });
+    const { modifiedCount: remapped } = await Project.updateMany(
+      { status: { $nin: ['pending', 'in_progress', 'completed'] } },
+      { $set: { status: 'pending' } },
+    );
+    if (remapped > 0) {
+      console.log(`Remapped ${remapped} project(s) onto a valid status.`);
+    }
+
+    // The Admin role was retired. Convert any Admin to a Member with every
+    // permission so they keep the access they had.
+    const wsWithAdmins = await Workspace.find({ 'members.role': 'admin' } as Record<string, unknown>);
+    let convertedWorkspaces = 0;
+    for (const ws of wsWithAdmins) {
+      let changed = false;
+      ws.members.forEach((m) => {
+        if ((m.role as string) === 'admin') {
+          m.role = 'member';
+          m.set('permissions', {
+            manageTasks: true, assignTasks: true, manageProjects: true,
+            deleteItems: true, manageMembers: true,
+          });
+          changed = true;
+        }
+      });
+      if (changed) { await ws.save(); convertedWorkspaces += 1; }
+    }
+    if (convertedWorkspaces > 0) {
+      console.log(`Converted admins to members with full permissions in ${convertedWorkspaces} workspace(s).`);
     }
   } catch (err) {
     console.error('Startup migration failed (continuing anyway):', (err as Error).message);

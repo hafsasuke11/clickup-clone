@@ -6,7 +6,17 @@ export interface User {
   createdAt: string;
 }
 
-export type WorkspaceRole = 'owner' | 'admin' | 'member';
+export type WorkspaceRole = 'owner' | 'member';
+
+export const PERMISSION_KEYS = [
+  'manageTasks',
+  'assignTasks',
+  'manageProjects',
+  'deleteItems',
+  'manageMembers',
+] as const;
+export type PermissionKey = (typeof PERMISSION_KEYS)[number];
+export type MemberPermissions = Record<PermissionKey, boolean>;
 
 export interface WorkspaceMemberRaw {
   userId: string;
@@ -38,6 +48,10 @@ export interface Member {
   userId: string;
   role: WorkspaceRole;
   joinedAt: string;
+  /** Grants the owner has toggled on for this member (all false for an owner). */
+  permissions: MemberPermissions;
+  /** What the member can actually do — an owner always has everything. */
+  effectivePermissions: MemberPermissions;
   user: User | null;
 }
 
@@ -61,7 +75,10 @@ export type AuditAction =
   | 'member_removed'
   | 'member_left'
   | 'workspace_renamed'
-  | 'ownership_transferred';
+  | 'ownership_transferred'
+  | 'permissions_changed'
+  | 'project_created'
+  | 'project_deleted';
 
 export interface ActivityEntry {
   id: string;
@@ -70,6 +87,31 @@ export interface ActivityEntry {
   createdAt: string;
   actor: User | null;
   target: User | null;
+}
+
+export type TaskActivityAction =
+  | 'task_created'
+  | 'task_renamed'
+  | 'task_status_changed'
+  | 'task_completed'
+  | 'task_reopened'
+  | 'task_assigned'
+  | 'task_unassigned'
+  | 'task_priority_changed'
+  | 'task_due_changed'
+  | 'task_moved'
+  | 'task_description_changed'
+  | 'task_deleted';
+
+export interface TaskActivityEntry {
+  id: string;
+  action: TaskActivityAction;
+  taskId: string | null;
+  taskName: string;
+  projectId: string | null;
+  meta: Record<string, unknown>;
+  createdAt: string;
+  actor: User | null;
 }
 
 export type ProjectPriority = 'urgent' | 'high' | 'normal' | 'low';
@@ -84,6 +126,7 @@ export interface Project {
   color: string;
   priority: ProjectPriority;
   status: ProjectStatus;
+  order: number;
   startDate: string | null;
   dueDate: string | null;
   createdBy: string;
@@ -102,6 +145,7 @@ export interface Task {
   description: string;
   status: TaskStatus;
   priority: TaskPriority;
+  order: number;
   dueDate: string | null;
   assigneeId: string | null;
   createdBy: string;

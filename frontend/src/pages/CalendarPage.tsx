@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { useTaskStore, getVisibleTasks } from '@/store/taskStore';
 import { useUiStore } from '@/store/uiStore';
+import { useCan } from '@/utils/permissions';
 import { FilterButton, AssigneeButton } from '@/components/TaskToolbar';
 import type { TaskPriority } from '@/utils/types';
 
@@ -15,6 +16,7 @@ const priorityDot: Record<TaskPriority, string> = {
 export default function CalendarPage() {
   const store = useTaskStore();
   const { setSelectedTaskId, setCreateModalOpen, setCreateModalDueDate } = useUiStore();
+  const canAddTask = useCan('manageTasks');
   const tasks = getVisibleTasks(store);
   const projectById = new Map(store.projects.map((p) => [p.id, p]));
   const today = new Date();
@@ -113,14 +115,16 @@ export default function CalendarPage() {
                         <p className="text-[10px] text-text-secondary px-1">+{cellTasks.length - 3} more</p>
                       )}
                     </div>
-                    <button
-                      onClick={() => {
-                        setCreateModalDueDate(cell.date!.toISOString().split('T')[0]);
-                        setCreateModalOpen(true);
-                      }}
-                      className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-accent-purple text-white flex items-center justify-center opacity-0 group-hover/cell:opacity-100 transition-opacity">
-                      <Plus size={11} />
-                    </button>
+                    {canAddTask && (
+                      <button
+                        onClick={() => {
+                          setCreateModalDueDate(cell.date!.toISOString().split('T')[0]);
+                          setCreateModalOpen(true);
+                        }}
+                        className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-accent-purple text-white flex items-center justify-center opacity-0 group-hover/cell:opacity-100 transition-opacity">
+                        <Plus size={11} />
+                      </button>
+                    )}
                   </>
                 )}
               </div>

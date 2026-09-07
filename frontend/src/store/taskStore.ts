@@ -1,11 +1,43 @@
 import { create } from 'zustand';
-import { apiClient } from '@/utils/api';
+import { apiClient, ApiError } from '@/utils/api';
 import { useUiStore } from './uiStore';
-import type { Project, Task, TaskPriority, TaskStatus } from '@/utils/types';
+import type { Project, Task, TaskActivityEntry, TaskPriority, TaskStatus } from '@/utils/types';
 
 export type ProjectInput = Partial<Omit<Project, 'id' | 'workspaceId' | 'createdBy' | 'createdAt'>> & {
   name: string;
 };
+
+export interface DuplicateTaskInfo {
+  id: string;
+  name: string;
+  status: string;
+}
+
+export type CreateTaskResult = { task: Task } | { duplicate: DuplicateTaskInfo } | { denied: true };
+
+/** Pull a user-facing message off an API error — the server's own text (e.g. a
+ *  "ask the owner" permission message) when it has one, else a fallback. */
+export function apiErrorMessage(err: unknown, fallback: string): string {
+  return err instanceof ApiError && err.data && typeof err.data.error === 'string'
+    ? err.data.error
+    : fallback;
+}
+
+const isPermissionDenied = (err: unknown) =>
+  err instanceof ApiError && err.status === 403 && err.data?.code === 'PERMISSION_DENIED';
+
+/** Client-side duplicate check against the tasks already loaded (every member's
+ *  tasks are fetched, so this catches most cases instantly). The server repeats
+ *  the check authoritatively on create. */
+export function findDuplicateTask(
+  tasks: Task[],
+  name: string,
+  projectId: string | null,
+): Task | undefined {
+  const n = name.trim().toLowerCase();
+  const pid = projectId ?? null;
+  return tasks.find((t) => (t.projectId ?? null) === pid && t.name.trim().toLowerCase() === n);
+}
 
 export type TaskSortKey = 'name' | 'dueDate' | 'priority' | 'created';
 
@@ -28,7 +60,8 @@ export function getVisibleTasks(state: {
     if (state.sortKey === 'name') cmp = a.name.localeCompare(b.name);
     else if (state.sortKey === 'priority') cmp = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority];
     else if (state.sortKey === 'dueDate') cmp = (a.dueDate ?? '9999-99-99').localeCompare(b.dueDate ?? '9999-99-99');
-    else cmp = a.createdAt.localeCompare(b.createdAt);
+    // 'created' is the manual drag-and-drop order: `order` first, creation time as tiebreak.
+    else cmp = (a.order - b.order) || a.createdAt.localeCompare(b.createdAt);
     return state.sortAsc ? cmp : -cmp;
   });
 }
@@ -36,22 +69,37 @@ export function getVisibleTasks(state: {
 interface TaskStore {
   tasks: Task[];
   projects: Project[];
+  taskActivity: TaskActivityEntry[];
+  taskActivityLoaded: boolean;
   loading: boolean;
   initialized: boolean;
 
   fetchTasks: (workspaceId: string) => Promise<void>;
   fetchProjects: (workspaceId: string) => Promise<void>;
+  fetchTaskActivity: (workspaceId: string) => Promise<void>;
+  /** Delete activity entries — for one project, or all of them when `projectId`
+   *  is omitted. */
+  clearTaskActivity: (workspaceId: string, projectId?: string) => Promise<void>;
 
+  /** Creates a task, unless an identically-named task already exists in the same
+   *  project — then it resolves to `{ duplicate }` and creates nothing. Pass
+   *  `{ force: true }` to add it anyway. */
   createTask: (workspaceId: string, data: {
     name: string; description?: string; status?: TaskStatus; priority?: TaskPriority;
     dueDate?: string | null; assigneeId?: string | null; projectId?: string | null;
-  }) => Promise<Task>;
+  }, opts?: { force?: boolean }) => Promise<CreateTaskResult>;
   updateTask: (workspaceId: string, taskId: string, patch: Partial<Task>) => Promise<void>;
   deleteTask: (workspaceId: string, taskId: string) => Promise<void>;
+  /** Persist a manual card order for one status column (Board / List drag-and-drop).
+   *  `orderedIds` is the full ordered id list for `status`; every task in it is
+   *  moved onto `status`, covering a card dragged in from another column. */
+  reorderTasks: (workspaceId: string, status: TaskStatus, orderedIds: string[]) => Promise<void>;
 
-  createProject: (workspaceId: string, data: ProjectInput) => Promise<Project>;
+  createProject: (workspaceId: string, data: ProjectInput) => Promise<Project | null>;
   updateProject: (workspaceId: string, projectId: string, patch: Partial<ProjectInput>) => Promise<void>;
   deleteProject: (workspaceId: string, projectId: string) => Promise<void>;
+  /** Persist a manual project order (Projects page drag-and-drop). */
+  reorderProjects: (workspaceId: string, orderedIds: string[]) => Promise<void>;
 
   filterPriorities: TaskPriority[];
   toggleFilterPriority: (p: TaskPriority) => void;
@@ -69,6 +117,8 @@ interface TaskStore {
 export const useTaskStore = create<TaskStore>((set, get) => ({
   tasks: [],
   projects: [],
+  taskActivity: [],
+  taskActivityLoaded: false,
   loading: false,
   initialized: false,
 
@@ -88,11 +138,55 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
     set({ projects });
   },
 
-  createTask: async (workspaceId, data) => {
-    const { task } = await apiClient.post<{ task: Task }>(`/api/workspaces/${workspaceId}/tasks`, data);
+  fetchTaskActivity: async (workspaceId) => {
+    try {
+      const { activity } = await apiClient.get<{ activity: TaskActivityEntry[] }>(
+        `/api/workspaces/${workspaceId}/task-activity`,
+      );
+      set({ taskActivity: activity, taskActivityLoaded: true });
+    } catch (err) {
+      console.error('fetchTaskActivity error:', err);
+      set({ taskActivityLoaded: true });
+    }
+  },
+
+  clearTaskActivity: async (workspaceId, projectId) => {
+    const prev = get().taskActivity;
+    set((s) => ({
+      taskActivity: projectId ? s.taskActivity.filter((e) => e.projectId !== projectId) : [],
+    }));
+    try {
+      const q = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+      await apiClient.del(`/api/workspaces/${workspaceId}/task-activity${q}`);
+    } catch (err) {
+      set({ taskActivity: prev });
+      useUiStore.getState().addToast('Failed to clear activity', 'error');
+      console.error('clearTaskActivity error:', err);
+    }
+  },
+
+  createTask: async (workspaceId, data, opts) => {
+    let task: Task;
+    try {
+      const res = await apiClient.post<{ task: Task }>(
+        `/api/workspaces/${workspaceId}/tasks`,
+        { ...data, force: opts?.force ?? false },
+      );
+      task = res.task;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && err.data && err.data.code === 'DUPLICATE_TASK') {
+        return { duplicate: err.data.existing as DuplicateTaskInfo };
+      }
+      if (isPermissionDenied(err)) {
+        useUiStore.getState().addToast(apiErrorMessage(err, 'Not allowed'), 'error');
+        return { denied: true };
+      }
+      throw err;
+    }
     set((s) => ({ tasks: [task, ...s.tasks] }));
     useUiStore.getState().addToast(`Task "${task.name}" created`, 'success');
-    return task;
+    if (get().taskActivityLoaded) void get().fetchTaskActivity(workspaceId);
+    return { task };
   },
 
   updateTask: async (workspaceId, taskId, patch) => {
@@ -101,10 +195,33 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
     try {
       const { task } = await apiClient.patch<{ task: Task }>(`/api/workspaces/${workspaceId}/tasks/${taskId}`, patch);
       set((s) => ({ tasks: s.tasks.map((t) => (t.id === taskId ? task : t)) }));
+      if (get().taskActivityLoaded) void get().fetchTaskActivity(workspaceId);
     } catch (err) {
       if (prev) set((s) => ({ tasks: s.tasks.map((t) => (t.id === taskId ? prev : t)) }));
-      useUiStore.getState().addToast('Failed to update task', 'error');
+      useUiStore.getState().addToast(apiErrorMessage(err, 'Failed to update task'), 'error');
       console.error('updateTask error:', err);
+    }
+  },
+
+  reorderTasks: async (workspaceId, status, orderedIds) => {
+    const prev = get().tasks;
+    const rank = new Map(orderedIds.map((id, i) => [id, i]));
+    set((s) => ({
+      tasks: s.tasks.map((t) =>
+        rank.has(t.id) ? { ...t, status, order: rank.get(t.id)! } : t,
+      ),
+    }));
+    try {
+      const { tasks } = await apiClient.put<{ tasks: Task[] }>(
+        `/api/workspaces/${workspaceId}/tasks/reorder`,
+        { status, ids: orderedIds },
+      );
+      set({ tasks });
+      if (get().taskActivityLoaded) void get().fetchTaskActivity(workspaceId);
+    } catch (err) {
+      set({ tasks: prev });
+      useUiStore.getState().addToast(apiErrorMessage(err, 'Failed to reorder tasks'), 'error');
+      console.error('reorderTasks error:', err);
     }
   },
 
@@ -114,17 +231,26 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
     try {
       await apiClient.del(`/api/workspaces/${workspaceId}/tasks/${taskId}`);
       useUiStore.getState().addToast('Task deleted', 'info');
+      if (get().taskActivityLoaded) void get().fetchTaskActivity(workspaceId);
     } catch (err) {
       if (prev) set((s) => ({ tasks: [...s.tasks, prev] }));
-      useUiStore.getState().addToast('Failed to delete task', 'error');
+      useUiStore.getState().addToast(apiErrorMessage(err, 'Failed to delete task'), 'error');
       console.error('deleteTask error:', err);
     }
   },
 
   createProject: async (workspaceId, data) => {
-    const { project } = await apiClient.post<{ project: Project }>(`/api/workspaces/${workspaceId}/projects`, data);
-    set((s) => ({ projects: [...s.projects, project] }));
-    return project;
+    try {
+      const { project } = await apiClient.post<{ project: Project }>(`/api/workspaces/${workspaceId}/projects`, data);
+      set((s) => ({ projects: [...s.projects, project] }));
+      return project;
+    } catch (err) {
+      if (isPermissionDenied(err)) {
+        useUiStore.getState().addToast(apiErrorMessage(err, 'Not allowed'), 'error');
+        return null;
+      }
+      throw err;
+    }
   },
 
   updateProject: async (workspaceId, projectId, patch) => {
@@ -135,8 +261,29 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
       set((s) => ({ projects: s.projects.map((p) => (p.id === projectId ? project : p)) }));
     } catch (err) {
       if (prev) set((s) => ({ projects: s.projects.map((p) => (p.id === projectId ? prev : p)) }));
-      useUiStore.getState().addToast('Failed to update project', 'error');
+      useUiStore.getState().addToast(apiErrorMessage(err, 'Failed to update project'), 'error');
       console.error('updateProject error:', err);
+    }
+  },
+
+  reorderProjects: async (workspaceId, orderedIds) => {
+    const prev = get().projects;
+    const rank = new Map(orderedIds.map((id, i) => [id, i]));
+    set((s) => ({
+      projects: s.projects.map((p) =>
+        rank.has(p.id) ? { ...p, order: rank.get(p.id)! } : p,
+      ),
+    }));
+    try {
+      const { projects } = await apiClient.put<{ projects: Project[] }>(
+        `/api/workspaces/${workspaceId}/projects/reorder`,
+        { ids: orderedIds },
+      );
+      set({ projects });
+    } catch (err) {
+      set({ projects: prev });
+      useUiStore.getState().addToast(apiErrorMessage(err, 'Failed to reorder projects'), 'error');
+      console.error('reorderProjects error:', err);
     }
   },
 
@@ -152,7 +299,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
       useUiStore.getState().addToast('Project deleted', 'info');
     } catch (err) {
       set({ projects: prevProjects, tasks: prevTasks });
-      useUiStore.getState().addToast('Failed to delete project', 'error');
+      useUiStore.getState().addToast(apiErrorMessage(err, 'Failed to delete project'), 'error');
       console.error('deleteProject error:', err);
     }
   },
@@ -171,5 +318,8 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
   sortAsc: true,
   toggleSortAsc: () => set((s) => ({ sortAsc: !s.sortAsc })),
 
-  reset: () => set({ tasks: [], projects: [], loading: false, initialized: false }),
+  reset: () => set({
+    tasks: [], projects: [], taskActivity: [], taskActivityLoaded: false,
+    loading: false, initialized: false,
+  }),
 }));

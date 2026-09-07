@@ -12,6 +12,19 @@ export function configureApiClient(opts: { getToken: () => string | null; onUnau
   onUnauthorized = opts.onUnauthorized;
 }
 
+/** Thrown for any non-2xx response. Carries the parsed JSON body so callers can
+ *  react to structured errors (e.g. a duplicate-task 409) instead of just text. */
+export class ApiError extends Error {
+  status: number;
+  data: Record<string, unknown> | null;
+  constructor(message: string, status: number, data: Record<string, unknown> | null) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.data = data;
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
@@ -28,13 +41,14 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
+    let body: Record<string, unknown> | null = null;
     try {
-      const body = await res.json();
-      if (body?.error) message = body.error;
+      body = await res.json();
+      if (body && typeof body.error === 'string') message = body.error;
     } catch {
       // ignore non-JSON error bodies
     }
-    throw new Error(message);
+    throw new ApiError(message, res.status, body);
   }
 
   if (res.status === 204) return undefined as T;
@@ -89,7 +103,7 @@ export async function apiMe(): Promise<User> {
 
 export interface InviteInfo {
   email: string;
-  role: 'admin' | 'member';
+  role: 'member';
   workspaceName: string;
   inviterName: string;
 }

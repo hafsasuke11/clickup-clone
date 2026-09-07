@@ -2,6 +2,8 @@ import { Router, type Request } from 'express';
 import { Project, PROJECT_PRIORITIES } from '../models/Project.js';
 import { Task } from '../models/Task.js';
 import { isValidStatus } from '../services/statusService.js';
+import { requirePermission } from '../middleware/requirePermission.js';
+import { logActivity } from '../services/auditService.js';
 
 type WorkspaceParams = { workspaceId: string };
 type ProjectParams = { workspaceId: string; projectId: string };
@@ -15,11 +17,11 @@ router.get('/', async (req: Request<WorkspaceParams>, res) => {
   if (priority) filter.priority = priority;
   if (status) filter.status = status;
 
-  const projects = await Project.find(filter).sort({ createdAt: 1 });
+  const projects = await Project.find(filter).sort({ order: 1, createdAt: 1 });
   res.json({ projects });
 });
 
-router.post('/', async (req: Request<WorkspaceParams>, res) => {
+router.post('/', requirePermission('manageProjects'), async (req: Request<WorkspaceParams>, res) => {
   const { name, description, color, priority, status, startDate, dueDate } = req.body ?? {};
   if (!name?.trim()) {
     return res.status(400).json({ error: 'Project name is required.' });
@@ -31,21 +33,58 @@ router.post('/', async (req: Request<WorkspaceParams>, res) => {
     return res.status(400).json({ error: 'Invalid status.' });
   }
 
+  // New projects go to the end of the manual ordering.
+  const last = await Project.findOne({ workspaceId: req.params.workspaceId })
+    .sort({ order: -1 })
+    .select('order');
+
   const project = await Project.create({
     workspaceId: req.params.workspaceId,
     name: name.trim(),
     description: description ?? '',
     color: color ?? undefined,
     priority: priority ?? 'normal',
-    status: status ?? 'active',
+    status: status ?? 'pending',
+    order: last ? last.order + 1 : 0,
     startDate: startDate ?? null,
     dueDate: dueDate ?? null,
     createdBy: req.userId,
   });
+
+  logActivity({
+    workspaceId: req.params.workspaceId,
+    actorId: req.userId!,
+    action: 'project_created',
+    meta: { projectId: String(project._id), name: project.name },
+  });
+
   res.status(201).json({ project });
 });
 
-router.patch('/:projectId', async (req: Request<ProjectParams>, res) => {
+// Persist a manual drag-and-drop ordering. `ids` is the full ordered list of
+// project ids for the workspace.
+router.put('/reorder', requirePermission('manageProjects'), async (req: Request<WorkspaceParams>, res) => {
+  const { ids } = req.body ?? {};
+  if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string')) {
+    return res.status(400).json({ error: 'ids must be an array of project ids.' });
+  }
+
+  if (ids.length) {
+    await Project.bulkWrite(
+      ids.map((id: string, i: number) => ({
+        updateOne: {
+          filter: { _id: id, workspaceId: req.params.workspaceId },
+          update: { $set: { order: i } },
+        },
+      })),
+    );
+  }
+
+  const projects = await Project.find({ workspaceId: req.params.workspaceId }).sort({ order: 1, createdAt: 1 });
+  res.json({ projects });
+});
+
+router.patch('/:projectId', requirePermission('manageProjects'), async (req: Request<ProjectParams>, res) => {
   const { name, description, color, priority, status, startDate, dueDate } = req.body ?? {};
 
   if (priority && !PROJECT_PRIORITIES.includes(priority)) {
@@ -76,7 +115,7 @@ router.patch('/:projectId', async (req: Request<ProjectParams>, res) => {
   res.json({ project });
 });
 
-router.delete('/:projectId', async (req: Request<ProjectParams>, res) => {
+router.delete('/:projectId', requirePermission('deleteItems'), async (req: Request<ProjectParams>, res) => {
   const project = await Project.findOneAndDelete({
     _id: req.params.projectId,
     workspaceId: req.params.workspaceId,
@@ -88,6 +127,13 @@ router.delete('/:projectId', async (req: Request<ProjectParams>, res) => {
     { workspaceId: req.params.workspaceId, projectId: req.params.projectId },
     { $set: { projectId: null } },
   );
+
+  logActivity({
+    workspaceId: req.params.workspaceId,
+    actorId: req.userId!,
+    action: 'project_deleted',
+    meta: { projectId: String(project._id), name: project.name },
+  });
 
   res.status(204).end();
 });

@@ -1,16 +1,19 @@
 import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { ListTodo, Calendar, LayoutDashboard, Kanban, FolderKanban, Users, UserPlus, LogOut, ChevronLeft, ChevronRight, ChevronDown, Check, Plus } from 'lucide-react';
+import { ListTodo, Calendar, LayoutDashboard, Kanban, FolderKanban, Users, Activity, UserPlus, LogOut, ChevronLeft, ChevronRight, ChevronDown, Check, Plus, CircleUser } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 import { useUiStore } from '@/store/uiStore';
+import { useCan } from '@/utils/permissions';
 import { initialsOf, colorFor } from '@/utils/avatarHelpers';
 
+// Listed alphabetically by label.
 const NAV_ITEMS = [
-  { to: '/app/list', label: 'List', icon: ListTodo },
+  { to: '/app/activity', label: 'Activity', icon: Activity },
+  { to: '/app/board', label: 'Board', icon: Kanban },
   { to: '/app/calendar', label: 'Calendar', icon: Calendar },
   { to: '/app/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/app/board', label: 'Board', icon: Kanban },
+  { to: '/app/list', label: 'List', icon: ListTodo },
   { to: '/app/projects', label: 'Projects', icon: FolderKanban },
   { to: '/app/users', label: 'Users', icon: Users },
 ];
@@ -20,6 +23,7 @@ export default function AppSidebar() {
   const { user, logout, knownAccounts, switchAccount, beginAddAccount } = useAuthStore();
   const { workspace, workspaces, switchWorkspace, members } = useWorkspaceStore();
   const { setInviteModalOpen, sidebarOpen, toggleSidebar } = useUiStore();
+  const canInvite = useCan('manageMembers');
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const hasMultipleWorkspaces = workspaces.length > 1;
@@ -108,16 +112,20 @@ export default function AppSidebar() {
           {sidebarOpen ? (
             <div className="flex items-center justify-between px-3 mb-2">
               <span className="text-xs font-semibold text-text-disabled uppercase tracking-wider">Members</span>
-              <button onClick={() => setInviteModalOpen(true)} className="text-text-secondary hover:text-accent-purple transition-colors" title="Invite member">
-                <UserPlus size={14} />
-              </button>
+              {canInvite && (
+                <button onClick={() => setInviteModalOpen(true)} className="text-text-secondary hover:text-accent-purple transition-colors" title="Invite member">
+                  <UserPlus size={14} />
+                </button>
+              )}
             </div>
           ) : (
-            <div className="flex justify-center mb-2">
-              <button onClick={() => setInviteModalOpen(true)} className="text-text-secondary hover:text-accent-purple transition-colors" title="Invite member">
-                <UserPlus size={15} />
-              </button>
-            </div>
+            canInvite && (
+              <div className="flex justify-center mb-2">
+                <button onClick={() => setInviteModalOpen(true)} className="text-text-secondary hover:text-accent-purple transition-colors" title="Invite member">
+                  <UserPlus size={15} />
+                </button>
+              </div>
+            )
           )}
           <div className={`space-y-1 ${sidebarOpen ? '' : 'flex flex-col items-center'}`}>
             {members.map((m) => (
@@ -188,6 +196,16 @@ export default function AppSidebar() {
                   <div className="my-1 border-t border-border" />
                 </>
               )}
+              <button
+                onClick={() => { setAccountMenuOpen(false); navigate('/app/profile'); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-text-primary transition-colors hover:bg-black/[0.03]"
+              >
+                <span className="w-6 h-6 flex items-center justify-center shrink-0">
+                  <CircleUser size={15} className="text-text-secondary" />
+                </span>
+                View profile
+              </button>
+              <div className="my-1 border-t border-border" />
               <button
                 onClick={handleAddAccount}
                 className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-text-primary transition-colors hover:bg-black/[0.03]"

@@ -42,7 +42,8 @@ router.post('/:token/accept', requireAuth, async (req, res) => {
   if (!workspace) return res.status(404).json({ error: 'Workspace no longer exists.' });
 
   if (!workspace.members.some((m) => String(m.userId) === String(user._id))) {
-    workspace.members.push({ userId: user._id, role: invite.role, joinedAt: new Date() });
+    // New joiners are always plain members — the owner grants permissions after.
+    workspace.members.push({ userId: user._id, role: 'member', joinedAt: new Date() });
     await workspace.save();
   }
 

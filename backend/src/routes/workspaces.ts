@@ -5,8 +5,13 @@ import { WorkspaceInvite } from '../models/WorkspaceInvite.js';
 import { Project } from '../models/Project.js';
 import { Task } from '../models/Task.js';
 import { AuditLog } from '../models/AuditLog.js';
+import { TaskActivity } from '../models/TaskActivity.js';
 import { toPublicUser, findUserById } from '../services/userService.js';
 import { requireWorkspaceMember } from '../middleware/requireWorkspaceMember.js';
+import { requirePermission, requireOwner } from '../middleware/requirePermission.js';
+import {
+  ALL_PERMISSIONS, PERMISSION_KEYS, effectivePermissions, normalizePermissions,
+} from '../services/permissions.js';
 import { sendInviteEmail, buildInviteUrl, isEmailConfigured } from '../services/emailService.js';
 import { logActivity } from '../services/auditService.js';
 import projectRoutes from './projects.js';
@@ -39,10 +44,7 @@ router.get('/:workspaceId', requireWorkspaceMember, async (req, res) => {
   res.json({ workspace });
 });
 
-router.patch('/:workspaceId', requireWorkspaceMember, async (req, res) => {
-  if (req.workspaceRole !== 'owner' && req.workspaceRole !== 'admin') {
-    return res.status(403).json({ error: 'Only owners and admins can rename this workspace.' });
-  }
+router.patch('/:workspaceId', requireWorkspaceMember, requireOwner('rename this workspace'), async (req, res) => {
 
   const { name } = req.body ?? {};
   if (!name?.trim()) {
@@ -77,8 +79,12 @@ router.get('/:workspaceId/members', requireWorkspaceMember, async (req, res) => 
     const user = usersById.get(String(m.userId));
     return {
       userId: String(m.userId),
-      role: m.role,
+      role: m.role === 'owner' ? 'owner' : 'member',
       joinedAt: m.joinedAt,
+      // Raw grants (for the owner's permission grid) plus the effective set the
+      // member actually operates with.
+      permissions: normalizePermissions(m.permissions),
+      effectivePermissions: effectivePermissions(m),
       user: user ? toPublicUser(user) : null,
     };
   });
@@ -86,17 +92,13 @@ router.get('/:workspaceId/members', requireWorkspaceMember, async (req, res) => 
   res.json({ members });
 });
 
-router.post('/:workspaceId/members', requireWorkspaceMember, async (req, res) => {
-  if (req.workspaceRole !== 'owner' && req.workspaceRole !== 'admin') {
-    return res.status(403).json({ error: 'Only owners and admins can invite members.' });
-  }
-
-  const { email, role } = req.body ?? {};
+router.post('/:workspaceId/members', requireWorkspaceMember, requirePermission('manageMembers'), async (req, res) => {
+  const { email } = req.body ?? {};
   const normalizedEmail = email?.trim().toLowerCase();
   if (!normalizedEmail) {
     return res.status(400).json({ error: 'Email is required.' });
   }
-  const assignedRole = role === 'admin' ? 'admin' : 'member';
+  const assignedRole = 'member' as const;
 
   const workspace = await Workspace.findById(req.params.workspaceId);
   if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
@@ -154,20 +156,14 @@ router.post('/:workspaceId/members', requireWorkspaceMember, async (req, res) =>
   });
 });
 
-router.get('/:workspaceId/invites', requireWorkspaceMember, async (req, res) => {
-  if (req.workspaceRole !== 'owner' && req.workspaceRole !== 'admin') {
-    return res.status(403).json({ error: 'Only owners and admins can view pending invites.' });
-  }
+router.get('/:workspaceId/invites', requireWorkspaceMember, requirePermission('manageMembers'), async (req, res) => {
   const invites = await WorkspaceInvite.find({ workspaceId: req.params.workspaceId }).sort({ createdAt: -1 });
   res.json({
     invites: invites.map((inv) => ({ ...inv.toJSON(), inviteUrl: buildInviteUrl(inv.token) })),
   });
 });
 
-router.delete('/:workspaceId/invites/:inviteId', requireWorkspaceMember, async (req, res) => {
-  if (req.workspaceRole !== 'owner' && req.workspaceRole !== 'admin') {
-    return res.status(403).json({ error: 'Only owners and admins can revoke invites.' });
-  }
+router.delete('/:workspaceId/invites/:inviteId', requireWorkspaceMember, requirePermission('manageMembers'), async (req, res) => {
   const invite = await WorkspaceInvite.findOneAndDelete({ _id: req.params.inviteId, workspaceId: req.params.workspaceId });
   if (invite) {
     logActivity({
@@ -180,12 +176,8 @@ router.delete('/:workspaceId/invites/:inviteId', requireWorkspaceMember, async (
   res.status(204).end();
 });
 
-router.get('/:workspaceId/activity', requireWorkspaceMember, async (req, res) => {
-  if (req.workspaceRole !== 'owner' && req.workspaceRole !== 'admin') {
-    return res.status(403).json({ error: 'Only owners and admins can view activity.' });
-  }
-
-  const entries = await AuditLog.find({ workspaceId: req.params.workspaceId }).sort({ createdAt: -1 }).limit(30);
+router.get('/:workspaceId/activity', requireWorkspaceMember, requireOwner('view the workspace activity log'), async (req, res) => {
+  const entries = await AuditLog.find({ workspaceId: req.params.workspaceId }).sort({ createdAt: -1 }).limit(50);
   const userIds = new Set<string>();
   entries.forEach((e) => {
     userIds.add(String(e.actorId));
@@ -206,54 +198,107 @@ router.get('/:workspaceId/activity', requireWorkspaceMember, async (req, res) =>
   res.json({ activity });
 });
 
-router.delete('/:workspaceId/activity', requireWorkspaceMember, async (req, res) => {
-  if (req.workspaceRole !== 'owner' && req.workspaceRole !== 'admin') {
-    return res.status(403).json({ error: 'Only owners and admins can clear activity.' });
-  }
+router.delete('/:workspaceId/activity', requireWorkspaceMember, requireOwner('clear the workspace activity log'), async (req, res) => {
   await AuditLog.deleteMany({ workspaceId: req.params.workspaceId });
   res.status(204).end();
 });
 
-router.patch('/:workspaceId/members/:userId', requireWorkspaceMember, async (req, res) => {
-  if (req.workspaceRole !== 'owner') {
-    return res.status(403).json({ error: 'Only the workspace owner can change roles.' });
-  }
+// Per-member task activity — what each member added / updated / completed /
+// changed. Visible to every workspace member (unlike the members-only audit log
+// above), optionally scoped to one project or one member.
+router.get('/:workspaceId/task-activity', requireWorkspaceMember, async (req, res) => {
+  const filter: Record<string, unknown> = { workspaceId: req.params.workspaceId };
+  if (req.query.projectId === 'none') filter.projectId = null;
+  else if (req.query.projectId) filter.projectId = req.query.projectId;
+  if (req.query.actorId) filter.actorId = req.query.actorId;
 
-  const { role } = req.body ?? {};
-  if (!['admin', 'member'].includes(role)) {
-    return res.status(400).json({ error: 'Role must be "admin" or "member".' });
-  }
+  const limit = Math.min(Number(req.query.limit) || 200, 500);
+  const entries = await TaskActivity.find(filter).sort({ createdAt: -1 }).limit(limit);
 
-  const workspace = await Workspace.findById(req.params.workspaceId);
-  if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
+  const actorIds = [...new Set(entries.map((e) => String(e.actorId)))];
+  const users = await User.find({ _id: { $in: actorIds } });
+  const usersById = new Map(users.map((u) => [String(u._id), toPublicUser(u)]));
 
-  const member = workspace.members.find((m) => String(m.userId) === req.params.userId);
-  if (!member) return res.status(404).json({ error: 'Member not found' });
-  if (String(member.userId) === String(workspace.ownerId)) {
-    return res.status(400).json({ error: "Can't change the owner's role." });
-  }
+  const activity = entries.map((e) => ({
+    id: String(e._id),
+    action: e.action,
+    taskId: e.taskId ? String(e.taskId) : null,
+    taskName: e.taskName,
+    projectId: e.projectId ? String(e.projectId) : null,
+    meta: e.meta,
+    createdAt: e.createdAt,
+    actor: usersById.get(String(e.actorId)) ?? null,
+  }));
 
-  const oldRole = member.role;
-  member.role = role;
-  await workspace.save();
-
-  if (oldRole !== role) {
-    logActivity({
-      workspaceId: String(req.params.workspaceId),
-      actorId: req.userId!,
-      action: 'role_changed',
-      targetUserId: String(req.params.userId),
-      meta: { oldRole, newRole: role },
-    });
-  }
-
-  res.json({ member: { userId: String(member.userId), role: member.role } });
+  res.json({ activity });
 });
+
+// Clear task activity — for one project (`?projectId=`), the "no project"
+// bucket (`?projectId=none`), or the whole workspace.
+router.delete('/:workspaceId/task-activity', requireWorkspaceMember, requirePermission('manageProjects'), async (req, res) => {
+  const filter: Record<string, unknown> = { workspaceId: req.params.workspaceId };
+  if (req.query.projectId === 'none') filter.projectId = null;
+  else if (req.query.projectId) filter.projectId = req.query.projectId;
+
+  const { deletedCount } = await TaskActivity.deleteMany(filter);
+  res.json({ deleted: deletedCount });
+});
+
+// Only the Owner can decide what a member is allowed to do.
+router.patch(
+  '/:workspaceId/members/:userId/permissions',
+  requireWorkspaceMember,
+  requireOwner('change member permissions'),
+  async (req, res) => {
+    const workspace = await Workspace.findById(req.params.workspaceId);
+    if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
+
+    const member = workspace.members.find((m) => String(m.userId) === req.params.userId);
+    if (!member) return res.status(404).json({ error: 'Member not found' });
+    if (String(member.userId) === String(workspace.ownerId)) {
+      return res.status(400).json({ error: 'The owner already has full access.' });
+    }
+
+    const before = normalizePermissions(member.permissions);
+    // Accept a partial patch: only the keys present in the body change.
+    const incoming = (req.body?.permissions ?? {}) as Record<string, unknown>;
+    const next = { ...before };
+    for (const k of PERMISSION_KEYS) {
+      if (k in incoming) next[k] = incoming[k] === true;
+    }
+    member.set('permissions', next);
+    await workspace.save();
+
+    const granted = PERMISSION_KEYS.filter((k) => !before[k] && next[k]);
+    const revoked = PERMISSION_KEYS.filter((k) => before[k] && !next[k]);
+    if (granted.length || revoked.length) {
+      logActivity({
+        workspaceId: String(req.params.workspaceId),
+        actorId: req.userId!,
+        action: 'permissions_changed',
+        targetUserId: String(req.params.userId),
+        meta: { granted, revoked },
+      });
+    }
+
+    res.json({
+      member: {
+        userId: String(member.userId),
+        role: 'member',
+        permissions: next,
+        effectivePermissions: next,
+      },
+    });
+  },
+);
 
 router.delete('/:workspaceId/members/:userId', requireWorkspaceMember, async (req, res) => {
   const isSelf = req.params.userId === req.userId;
-  if (!isSelf && req.workspaceRole !== 'owner' && req.workspaceRole !== 'admin') {
-    return res.status(403).json({ error: 'Only owners and admins can remove members.' });
+  if (!isSelf && req.workspaceRole !== 'owner' && !req.workspacePermissions?.manageMembers) {
+    return res.status(403).json({
+      code: 'PERMISSION_DENIED',
+      error: "You don't have permission to manage members. Ask the workspace owner to grant it.",
+    });
   }
 
   const workspace = await Workspace.findById(req.params.workspaceId);
@@ -305,7 +350,11 @@ router.post('/:workspaceId/transfer-ownership', requireWorkspaceMember, async (r
 
   const oldOwnerId = String(workspace.ownerId);
   const oldOwnerMember = workspace.members.find((m) => String(m.userId) === oldOwnerId);
-  if (oldOwnerMember) oldOwnerMember.role = 'admin';
+  if (oldOwnerMember) {
+    oldOwnerMember.role = 'member';
+    // Keep the former owner fully capable rather than locking them out.
+    oldOwnerMember.set('permissions', { ...ALL_PERMISSIONS });
+  }
   newOwner.role = 'owner';
   workspace.ownerId = newOwner.userId;
   await workspace.save();

@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Trash2, Mail, Clock, UserPlus, Search, LogOut, RotateCw, ShieldAlert, Activity } from 'lucide-react';
+import {
+  Trash2, Mail, Clock, UserPlus, Search, LogOut, RotateCw, ShieldAlert, Activity,
+  ChevronDown, ChevronRight, Check, ShieldCheck,
+} from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 import { useUiStore } from '@/store/uiStore';
 import { initialsOf, colorFor } from '@/utils/avatarHelpers';
 import { describeActivity } from '@/utils/activityText';
+import { PERMISSION_META, useMyMembership } from '@/utils/permissions';
+import { apiErrorMessage } from '@/store/taskStore';
 import ConfirmDialog from '@/components/ConfirmDialog';
-import type { WorkspaceRole } from '@/utils/types';
-
-const ROLE_LABELS: Record<WorkspaceRole, string> = { owner: 'Owner', admin: 'Admin', member: 'Member' };
+import type { Member, PermissionKey } from '@/utils/types';
 
 type PendingConfirm =
   | { type: 'leave' }
@@ -28,28 +31,140 @@ function timeAgo(dateStr: string): string {
   return `${days}d ago`;
 }
 
+/** A small on/off pill toggle. */
+function Toggle({ on, disabled, onClick }: { on: boolean; disabled?: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`relative w-9 h-5 rounded-full transition-colors shrink-0 disabled:opacity-50 ${on ? 'bg-accent-purple' : 'bg-black/[0.12]'}`}
+      aria-pressed={on}
+    >
+      <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${on ? 'left-[18px]' : 'left-0.5'}`} />
+    </button>
+  );
+}
+
+function MemberRow({
+  member, isSelf, canEditPermissions, canRemove, busy, onRemove, onLeave, onPermissionToggle,
+}: {
+  member: Member;
+  isSelf: boolean;
+  canEditPermissions: boolean;
+  canRemove: boolean;
+  busy: boolean;
+  onRemove: () => void;
+  onLeave: () => void;
+  onPermissionToggle: (key: PermissionKey, next: boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const isOwner = member.role === 'owner';
+  const grantedCount = PERMISSION_META.filter((p) => member.permissions[p.key]).length;
+
+  return (
+    <div className="border-b border-border last:border-0">
+      <div className="flex items-center gap-3 px-4 py-3">
+        <div className={`w-8 h-8 rounded-full ${colorFor(member.userId)} flex items-center justify-center text-[10px] font-bold text-white shrink-0`}>
+          {member.user ? initialsOf(member.user.fullName) : '?'}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm text-text-primary truncate">
+            {member.user?.fullName ?? 'Unknown'}
+            {isSelf && <span className="text-text-disabled"> (you)</span>}
+          </p>
+          <p className="text-xs text-text-secondary truncate">{member.user?.email}</p>
+        </div>
+
+        <span
+          className={`text-[11px] px-1.5 py-0.5 rounded-full border font-medium shrink-0 ${
+            isOwner
+              ? 'text-accent-purple bg-accent-purple/10 border-accent-purple/20'
+              : 'text-text-secondary bg-black/[0.04] border-border'
+          }`}
+        >
+          {isOwner ? 'Owner' : 'Member'}
+        </span>
+
+        {!isOwner && (
+          <span className="text-[11px] text-text-secondary shrink-0 hidden sm:block w-24 text-right">
+            {grantedCount === 0 ? 'View only' : `${grantedCount} permission${grantedCount === 1 ? '' : 's'}`}
+          </span>
+        )}
+
+        <div className="flex items-center gap-1 shrink-0">
+          {!isOwner && canEditPermissions && (
+            <button
+              onClick={() => setOpen((v) => !v)}
+              className="p-1 text-text-secondary hover:text-text-primary hover:bg-black/[0.04] rounded transition-colors"
+              title="Edit permissions"
+            >
+              {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+            </button>
+          )}
+          {canRemove && !isOwner && !isSelf && (
+            <button
+              onClick={onRemove}
+              disabled={busy}
+              title="Remove member"
+              className="p-1 text-text-disabled hover:text-accent-red transition-colors disabled:opacity-50"
+            >
+              <Trash2 size={14} />
+            </button>
+          )}
+          {isSelf && !isOwner && (
+            <button onClick={onLeave} title="Leave workspace" className="p-1 text-text-disabled hover:text-accent-red transition-colors">
+              <LogOut size={14} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {open && !isOwner && canEditPermissions && (
+        <div className="px-4 pb-4 pt-1 bg-black/[0.015] space-y-1">
+          <p className="text-[11px] text-text-secondary mb-1.5">
+            Choose what {member.user?.fullName ?? 'this member'} is allowed to do. Everything is off by default.
+          </p>
+          {PERMISSION_META.map((p) => (
+            <div key={p.key} className="flex items-center gap-3 py-1.5">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium text-text-primary">{p.label}</p>
+                <p className="text-[11px] text-text-disabled leading-snug">{p.hint}</p>
+              </div>
+              <Toggle
+                on={member.permissions[p.key]}
+                disabled={busy}
+                onClick={() => onPermissionToggle(p.key, !member.permissions[p.key])}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function UsersPage() {
   const { user } = useAuthStore();
   const {
     workspace, members, pendingInvites, activity,
-    updateMemberRole, removeMember, revokeInvite, addMember,
+    updateMemberPermissions, removeMember, revokeInvite, addMember,
     transferOwnership, deleteWorkspace, fetchActivity, clearActivity, fetchWorkspaces,
   } = useWorkspaceStore();
   const { setInviteModalOpen, addToast } = useUiStore();
+  const me = useMyMembership();
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [confirmAction, setConfirmAction] = useState<PendingConfirm>(null);
   const [actionLoading, setActionLoading] = useState(false);
 
-  const myRole = members.find((m) => m.userId === user?.id)?.role ?? 'member';
-  const canManage = myRole === 'owner' || myRole === 'admin';
-  const canChangeRoles = myRole === 'owner';
-  const isOwnerUser = myRole === 'owner';
+  const isOwnerUser = me?.role === 'owner';
+  const canManageMembers = isOwnerUser || Boolean(me?.effectivePermissions.manageMembers);
 
   useEffect(() => {
-    if (canManage) void fetchActivity();
+    if (isOwnerUser) void fetchActivity();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canManage, workspace?.id]);
+  }, [isOwnerUser, workspace?.id]);
 
   const filteredMembers = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -59,25 +174,24 @@ export default function UsersPage() {
 
   const transferCandidates = members.filter((m) => m.role !== 'owner');
 
-  const handleRoleChange = async (userId: string, role: 'admin' | 'member') => {
-    setBusyUserId(userId);
-    try {
-      await updateMemberRole(userId, role);
-      addToast('Role updated', 'success');
-    } catch (err) {
-      addToast(err instanceof Error ? err.message : 'Failed to update role.', 'error');
-    } finally {
-      setBusyUserId(null);
-    }
-  };
-
   const handleRemove = async (userId: string) => {
     setBusyUserId(userId);
     try {
       await removeMember(userId);
       addToast('Member removed', 'success');
     } catch (err) {
-      addToast(err instanceof Error ? err.message : 'Failed to remove member.', 'error');
+      addToast(apiErrorMessage(err, 'Failed to remove member.'), 'error');
+    } finally {
+      setBusyUserId(null);
+    }
+  };
+
+  const handlePermissionToggle = async (userId: string, key: PermissionKey, next: boolean) => {
+    setBusyUserId(userId);
+    try {
+      await updateMemberPermissions(userId, { [key]: next });
+    } catch (err) {
+      addToast(apiErrorMessage(err, 'Failed to update permissions.'), 'error');
     } finally {
       setBusyUserId(null);
     }
@@ -88,16 +202,16 @@ export default function UsersPage() {
       await revokeInvite(id);
       addToast('Invite revoked', 'info');
     } catch (err) {
-      addToast(err instanceof Error ? err.message : 'Failed to revoke invite.', 'error');
+      addToast(apiErrorMessage(err, 'Failed to revoke invite.'), 'error');
     }
   };
 
-  const handleResend = async (email: string, role: WorkspaceRole) => {
+  const handleResend = async (email: string) => {
     try {
-      await addMember(email, role === 'admin' ? 'admin' : 'member');
+      await addMember(email);
       addToast('Invite resent', 'success');
     } catch (err) {
-      addToast(err instanceof Error ? err.message : 'Failed to resend invite.', 'error');
+      addToast(apiErrorMessage(err, 'Failed to resend invite.'), 'error');
     }
   };
 
@@ -108,7 +222,7 @@ export default function UsersPage() {
       addToast(successMsg, 'success');
       setConfirmAction(null);
     } catch (err) {
-      addToast(err instanceof Error ? err.message : 'Something went wrong.', 'error');
+      addToast(apiErrorMessage(err, 'Something went wrong.'), 'error');
     } finally {
       setActionLoading(false);
     }
@@ -129,87 +243,66 @@ export default function UsersPage() {
             />
           </div>
         </div>
-        {canManage && (
+        {canManageMembers && (
           <button onClick={() => setInviteModalOpen(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-accent-purple text-white rounded-lg text-xs font-semibold hover:bg-purple-700 transition-colors shrink-0">
             <UserPlus size={13} /> Invite Member
           </button>
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-5 space-y-6 max-w-4xl mx-auto w-full">
+      <div className="flex-1 overflow-y-auto p-5 space-y-6">
+        {/* Your own access (members only) */}
+        {me && !isOwnerUser && (
+          <div className="bg-surface border border-border rounded-xl overflow-hidden">
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
+              <ShieldCheck size={14} className="text-text-secondary" />
+              <span className="text-sm font-semibold text-text-primary">Your access</span>
+            </div>
+            <div className="px-4 py-3 space-y-1.5">
+              {PERMISSION_META.map((p) => {
+                const on = me.effectivePermissions[p.key];
+                return (
+                  <div key={p.key} className="flex items-center gap-2 text-xs">
+                    <span className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 ${on ? 'bg-accent-green/15 text-accent-green' : 'bg-black/[0.05] text-text-disabled'}`}>
+                      {on ? <Check size={11} /> : '–'}
+                    </span>
+                    <span className={on ? 'text-text-primary' : 'text-text-disabled'}>{p.label}</span>
+                  </div>
+                );
+              })}
+              <p className="text-[11px] text-text-secondary pt-1.5">
+                Need more access? Ask the workspace owner to grant it.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Members + permissions */}
         <div className="bg-surface border border-border rounded-xl overflow-hidden">
-          <div className="grid grid-cols-12 gap-3 px-4 py-2 text-xs text-text-secondary font-semibold uppercase tracking-wider border-b border-border">
-            <div className="col-span-5">Name</div>
-            <div className="col-span-3">Role</div>
-            <div className="col-span-3">Joined</div>
-            <div className="col-span-1" />
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+            <span className="text-sm font-semibold text-text-primary">Members</span>
+            {isOwnerUser && <span className="text-[11px] text-text-secondary">Click a member to set permissions</span>}
           </div>
           {filteredMembers.length === 0 ? (
-            <p className="text-sm text-text-secondary px-4 py-8 text-center">No members match "{search}".</p>
-          ) : filteredMembers.map((m) => {
-            const isOwner = m.role === 'owner';
-            const isSelf = m.userId === user?.id;
-            return (
-              <div key={m.userId} className="grid grid-cols-12 gap-3 px-4 py-3 border-b border-border last:border-0 items-center">
-                <div className="col-span-5 flex items-center gap-2.5 min-w-0">
-                  <div className={`w-7 h-7 rounded-full ${colorFor(m.userId)} flex items-center justify-center text-[10px] font-bold text-white shrink-0`}>
-                    {m.user ? initialsOf(m.user.fullName) : '?'}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-sm text-text-primary truncate">
-                      {m.user?.fullName ?? 'Unknown'}
-                      {isSelf && <span className="text-text-disabled"> (you)</span>}
-                    </p>
-                    <p className="text-xs text-text-secondary truncate">{m.user?.email}</p>
-                  </div>
-                </div>
-                <div className="col-span-3">
-                  {canChangeRoles && !isOwner ? (
-                    <select
-                      value={m.role}
-                      disabled={busyUserId === m.userId}
-                      onChange={(e) => void handleRoleChange(m.userId, e.target.value as 'admin' | 'member')}
-                      className="text-xs bg-background border border-border rounded-lg px-2 py-1 text-text-primary focus:outline-none focus:border-accent-purple disabled:opacity-50"
-                    >
-                      <option value="member">Member</option>
-                      <option value="admin">Admin</option>
-                    </select>
-                  ) : (
-                    <span className={`text-[11px] px-1.5 py-0.5 rounded-full border font-medium capitalize ${isOwner ? 'text-accent-purple bg-accent-purple/10 border-accent-purple/20' : 'text-text-secondary bg-black/[0.04] border-border'}`}>
-                      {ROLE_LABELS[m.role]}
-                    </span>
-                  )}
-                </div>
-                <div className="col-span-3 text-xs text-text-secondary">
-                  {new Date(m.joinedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                </div>
-                <div className="col-span-1 flex justify-end">
-                  {canManage && !isOwner && !isSelf && (
-                    <button
-                      onClick={() => void handleRemove(m.userId)}
-                      disabled={busyUserId === m.userId}
-                      title="Remove member"
-                      className="text-text-disabled hover:text-accent-red transition-colors disabled:opacity-50"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  )}
-                  {isSelf && !isOwner && (
-                    <button
-                      onClick={() => setConfirmAction({ type: 'leave' })}
-                      title="Leave workspace"
-                      className="text-text-disabled hover:text-accent-red transition-colors"
-                    >
-                      <LogOut size={14} />
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+            <p className="text-sm text-text-secondary px-4 py-8 text-center">No members match “{search}”.</p>
+          ) : (
+            filteredMembers.map((m) => (
+              <MemberRow
+                key={m.userId}
+                member={m}
+                isSelf={m.userId === user?.id}
+                canEditPermissions={isOwnerUser}
+                canRemove={canManageMembers}
+                busy={busyUserId === m.userId}
+                onRemove={() => void handleRemove(m.userId)}
+                onLeave={() => setConfirmAction({ type: 'leave' })}
+                onPermissionToggle={(key, next) => void handlePermissionToggle(m.userId, key, next)}
+              />
+            ))
+          )}
         </div>
 
-        {canManage && pendingInvites.length > 0 && (
+        {canManageMembers && pendingInvites.length > 0 && (
           <div className="bg-surface border border-border rounded-xl overflow-hidden">
             <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
               <Clock size={14} className="text-text-secondary" />
@@ -221,10 +314,9 @@ export default function UsersPage() {
                   <div className="flex items-center gap-2 min-w-0">
                     <Mail size={13} className="text-text-disabled shrink-0" />
                     <span className="text-sm text-text-primary truncate">{inv.email}</span>
-                    <span className="text-[11px] text-text-secondary capitalize shrink-0">{inv.role}</span>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
-                    <button onClick={() => void handleResend(inv.email, inv.role)} className="text-text-disabled hover:text-accent-purple transition-colors" title="Resend invite">
+                    <button onClick={() => void handleResend(inv.email)} className="text-text-disabled hover:text-accent-purple transition-colors" title="Resend invite">
                       <RotateCw size={13} />
                     </button>
                     <button onClick={() => void handleRevoke(inv.id)} className="text-text-disabled hover:text-accent-red transition-colors" title="Revoke invite">
@@ -237,12 +329,12 @@ export default function UsersPage() {
           </div>
         )}
 
-        {canManage && (
+        {isOwnerUser && (
           <div className="bg-surface border border-border rounded-xl overflow-hidden">
             <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border">
               <div className="flex items-center gap-2">
                 <Activity size={14} className="text-text-secondary" />
-                <span className="text-sm font-semibold text-text-primary">Activity</span>
+                <span className="text-sm font-semibold text-text-primary">Activity log</span>
               </div>
               {activity.length > 0 && (
                 <button
@@ -281,7 +373,7 @@ export default function UsersPage() {
               <div className="flex items-center justify-between px-4 py-3.5 gap-3">
                 <div className="min-w-0">
                   <p className="text-sm text-text-primary">Transfer ownership</p>
-                  <p className="text-xs text-text-secondary">Hand this workspace to another member. You'll become an admin.</p>
+                  <p className="text-xs text-text-secondary">Hand this workspace to another member. You become a member with full permissions.</p>
                 </div>
                 {transferCandidates.length > 0 ? (
                   <select
@@ -338,7 +430,7 @@ export default function UsersPage() {
       {confirmAction?.type === 'transfer' && (
         <ConfirmDialog
           title="Transfer ownership?"
-          message={`${confirmAction.name} will become the owner of ${workspace?.name ?? 'this workspace'}. You'll be moved to admin.`}
+          message={`${confirmAction.name} will become the owner of ${workspace?.name ?? 'this workspace'}. You'll become a member (keeping full permissions).`}
           confirmLabel="Transfer"
           danger
           loading={actionLoading}

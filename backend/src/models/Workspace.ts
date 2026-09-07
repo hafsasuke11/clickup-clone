@@ -2,11 +2,25 @@ import { Schema, model } from 'mongoose';
 import { docToJSON } from '../utils/serialize.js';
 import { DEFAULT_PROJECT_STATUSES, DEFAULT_TASK_STATUSES } from './statusDefaults.js';
 
+const permissionsSchema = new Schema(
+  {
+    manageTasks: { type: Boolean, default: false },
+    assignTasks: { type: Boolean, default: false },
+    manageProjects: { type: Boolean, default: false },
+    deleteItems: { type: Boolean, default: false },
+    manageMembers: { type: Boolean, default: false },
+  },
+  { _id: false },
+);
+
 const memberSchema = new Schema(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    role: { type: String, enum: ['owner', 'admin', 'member'], default: 'member' },
+    // Just Owner and Member now. Existing 'admin' rows are migrated on startup.
+    role: { type: String, enum: ['owner', 'member'], default: 'member' },
     joinedAt: { type: Date, default: () => new Date() },
+    // Only meaningful for members — an owner implicitly has everything.
+    permissions: { type: permissionsSchema, default: () => ({}) },
   },
   { _id: false },
 );

@@ -11,7 +11,9 @@ const projectSchema = new Schema(
     description: { type: String, default: '' },
     color: { type: String, default: '#6D4FE0' },
     priority: { type: String, enum: PROJECT_PRIORITIES, default: 'normal' },
-    status: { type: String, default: 'active' },
+    status: { type: String, default: 'pending' },
+    // Manual sort position on the Projects page (drag-and-drop). Lower comes first.
+    order: { type: Number, default: 0 },
     startDate: { type: Date, default: null },
     dueDate: { type: Date, default: null },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },

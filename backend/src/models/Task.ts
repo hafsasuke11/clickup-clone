@@ -13,6 +13,9 @@ const taskSchema = new Schema(
     description: { type: String, default: '' },
     status: { type: String, default: 'pending' },
     priority: { type: String, enum: TASK_PRIORITIES, default: 'normal' },
+    // Manual sort position within a status column (Board / List drag-and-drop).
+    // Lower comes first; new tasks float to the top of their column.
+    order: { type: Number, default: 0 },
     dueDate: { type: Date, default: null },
     assigneeId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
@@ -20,7 +23,7 @@ const taskSchema = new Schema(
   { timestamps: true, toJSON: { transform: docToJSON } },
 );
 
-taskSchema.index({ workspaceId: 1, status: 1 });
+taskSchema.index({ workspaceId: 1, status: 1, order: 1 });
 taskSchema.index({ workspaceId: 1, dueDate: 1 });
 taskSchema.index({ workspaceId: 1, assigneeId: 1 });
 

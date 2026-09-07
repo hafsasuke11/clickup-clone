@@ -1,6 +1,11 @@
 import { useState } from 'react';
-import { Plus, Pencil, Trash2, Check, X, Settings2 } from 'lucide-react';
+import { DndContext, PointerSensor, useSensor, useSensors, closestCenter } from '@dnd-kit/core';
+import type { DragEndEvent } from '@dnd-kit/core';
+import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { Plus, Pencil, Trash2, Check, X, Settings2, GripVertical } from 'lucide-react';
 import { useWorkspaceStore, useStatuses } from '@/store/workspaceStore';
+import { useIsOwner } from '@/utils/permissions';
 import { useUiStore } from '@/store/uiStore';
 import { STATUS_PALETTE, StatusDot } from './TaskStatusPill';
 import type { StatusKind, WorkspaceStatus } from '@/utils/types';
@@ -73,8 +78,15 @@ export function AddStatusForm({ kind, onDone }: { kind: StatusKind; onDone?: () 
 
 /** One editable row: rename, recolour, reorder, delete. */
 function StatusRow({
-  kind, status, index, total,
-}: { kind: StatusKind; status: WorkspaceStatus; index: number; total: number }) {
+  kind, status, index, total, showArrows = true, dragHandle,
+}: {
+  kind: StatusKind;
+  status: WorkspaceStatus;
+  index: number;
+  total: number;
+  showArrows?: boolean;
+  dragHandle?: React.ReactNode;
+}) {
   const { updateStatus, deleteStatus, reorderStatuses } = useWorkspaceStore();
   const statuses = useStatuses(kind);
   const [editing, setEditing] = useState(false);
@@ -119,10 +131,13 @@ function StatusRow({
 
   return (
     <div className="flex items-center gap-2 py-1.5 group">
-      <div className="flex flex-col text-text-disabled">
-        <button onClick={() => move(-1)} disabled={index === 0} className="hover:text-text-primary disabled:opacity-30 leading-none">▲</button>
-        <button onClick={() => move(1)} disabled={index === total - 1} className="hover:text-text-primary disabled:opacity-30 leading-none">▼</button>
-      </div>
+      {dragHandle}
+      {showArrows && (
+        <div className="flex flex-col text-text-disabled">
+          <button onClick={() => move(-1)} disabled={index === 0} className="hover:text-text-primary disabled:opacity-30 leading-none">▲</button>
+          <button onClick={() => move(1)} disabled={index === total - 1} className="hover:text-text-primary disabled:opacity-30 leading-none">▼</button>
+        </div>
+      )}
       <StatusDot color={status.color} />
       <span className="text-xs text-text-primary flex-1 truncate">{status.label}</span>
       {status.builtIn && <span className="text-[9px] text-text-disabled uppercase tracking-wide">built-in</span>}
@@ -145,20 +160,66 @@ function StatusRow({
   );
 }
 
+/** A status row wrapped so it can be dragged to reorder within the manager. */
+function SortableStatusRow({
+  kind, status, index, total,
+}: { kind: StatusKind; status: WorkspaceStatus; index: number; total: number }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: status.key });
+  return (
+    <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }}>
+      <StatusRow
+        kind={kind}
+        status={status}
+        index={index}
+        total={total}
+        showArrows={false}
+        dragHandle={
+          <button
+            {...attributes}
+            {...listeners}
+            className="text-text-disabled hover:text-text-secondary cursor-grab active:cursor-grabbing touch-none"
+            title="Drag to reorder"
+            aria-label="Reorder status"
+          >
+            <GripVertical size={13} />
+          </button>
+        }
+      />
+    </div>
+  );
+}
+
 /** Full manager: list every status with edit/reorder/delete plus an add form. */
 function StatusManagerPanel({ kind }: { kind: StatusKind }) {
   const statuses = useStatuses(kind);
+  const reorderStatuses = useWorkspaceStore((s) => s.reorderStatuses);
   const [adding, setAdding] = useState(false);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
+
+  const onDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const keys = statuses.map((s) => s.key);
+    const oldIndex = keys.indexOf(String(active.id));
+    const newIndex = keys.indexOf(String(over.id));
+    if (oldIndex === -1 || newIndex === -1) return;
+    void reorderStatuses(kind, arrayMove(keys, oldIndex, newIndex));
+  };
+
   return (
     <div className="w-64">
       <p className="px-1 pb-1 text-[10px] font-semibold text-text-secondary uppercase tracking-wider">
         {kind === 'task' ? 'Task statuses' : 'Project statuses'}
       </p>
-      <div className="divide-y divide-border">
-        {statuses.map((s, i) => (
-          <StatusRow key={s.key} kind={kind} status={s} index={i} total={statuses.length} />
-        ))}
-      </div>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+        <SortableContext items={statuses.map((s) => s.key)} strategy={verticalListSortingStrategy}>
+          <div className="divide-y divide-border">
+            {statuses.map((s, i) => (
+              <SortableStatusRow key={s.key} kind={kind} status={s} index={i} total={statuses.length} />
+            ))}
+          </div>
+        </SortableContext>
+      </DndContext>
       <div className="pt-2 mt-1 border-t border-border">
         {adding ? (
           <AddStatusForm kind={kind} onDone={() => setAdding(false)} />
@@ -177,10 +238,11 @@ export function StatusColumnMenu({
   kind, statusKey, align = 'right',
 }: { kind: StatusKind; statusKey: string; align?: 'left' | 'right' }) {
   const statuses = useStatuses(kind);
+  const isOwner = useIsOwner();
   const [open, setOpen] = useState(false);
   const index = statuses.findIndex((s) => s.key === statusKey);
   const status = statuses[index];
-  if (!status) return null;
+  if (!status || !isOwner) return null;
 
   return (
     <div className="relative">
@@ -205,7 +267,9 @@ export function StatusColumnMenu({
 
 /** Compact toolbar button: "+ Status" → popover with the add form. */
 export function AddStatusButton({ kind, label = 'Status' }: { kind: StatusKind; label?: string }) {
+  const isOwner = useIsOwner();
   const [open, setOpen] = useState(false);
+  if (!isOwner) return null;
   return (
     <div className="relative">
       <button
@@ -231,7 +295,9 @@ export function AddStatusButton({ kind, label = 'Status' }: { kind: StatusKind; 
 
 /** Toolbar button that opens the status manager in a popover. */
 export function ManageStatusesButton({ kind }: { kind: StatusKind }) {
+  const isOwner = useIsOwner();
   const [open, setOpen] = useState(false);
+  if (!isOwner) return null;
   return (
     <div className="relative">
       <button

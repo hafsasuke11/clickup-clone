@@ -10,6 +10,15 @@ import {
 
 const router = Router({ mergeParams: true });
 
+// Statuses are workspace structure — only the owner can change them.
+router.use((req, res, next) => {
+  if (req.method === 'GET' || req.workspaceRole === 'owner') return next();
+  return res.status(403).json({
+    code: 'PERMISSION_DENIED',
+    error: 'Only the workspace owner can manage statuses.',
+  });
+});
+
 type Kind = 'task' | 'project';
 const FIELD = { task: 'taskStatuses', project: 'projectStatuses' } as const;
 const FALLBACK = { task: FALLBACK_TASK_STATUS, project: FALLBACK_PROJECT_STATUS } as const;

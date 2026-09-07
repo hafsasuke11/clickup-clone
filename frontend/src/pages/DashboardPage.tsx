@@ -36,7 +36,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-6 max-w-6xl mx-auto w-full">
+      <div className="flex-1 overflow-y-auto p-6 space-y-6">
       {/* Status tiles */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
         {statuses.map((s) => {
