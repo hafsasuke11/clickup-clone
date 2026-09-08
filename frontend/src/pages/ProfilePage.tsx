@@ -1,23 +1,31 @@
 import { useEffect, useMemo, useState } from 'react';
-import { User as UserIcon, Mail, Building2, CalendarDays, ShieldCheck, Check, Minus, ListChecks, CircleCheck, CircleDot, AlertTriangle, ChevronRight } from 'lucide-react';
+import { User as UserIcon, Mail, Building2, CalendarDays, ShieldCheck, Check, Minus } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useTaskStore } from '@/store/taskStore';
 import { useWorkspaceStore, useTaskStatuses } from '@/store/workspaceStore';
 import { useUiStore } from '@/store/uiStore';
-import { StatusPill } from '@/components/TaskStatusPill';
+import { DonutChart, type Slice } from '@/components/StatCharts';
+import CategoryDetailModal from '@/components/CategoryDetailModal';
+import ActivityFeed from '@/components/ActivityFeed';
+import TwoFactorPanel from '@/components/TwoFactorPanel';
 import { PERMISSION_META, useMyMembership } from '@/utils/permissions';
-import { describeTaskActivity } from '@/utils/activityText';
 import { initialsOf, colorFor } from '@/utils/avatarHelpers';
+import type { Task } from '@/utils/types';
 
-type TaskFilter = 'all' | 'open' | 'completed' | 'overdue';
+const COMPLETED = 'completed';
 
-const shortDate = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+type Bucket = 'completed' | 'in_progress' | 'pending' | 'overdue';
+// No explicit colours — DonutChart falls back to the same mono-purple ramp the
+// Dashboard's "Tasks by status" chart uses.
+const BUCKET_META: { key: Bucket; label: string }[] = [
+  { key: 'completed', label: 'Completed' },
+  { key: 'in_progress', label: 'In Progress' },
+  { key: 'pending', label: 'Pending' },
+  { key: 'overdue', label: 'Due / Overdue' },
+];
 
 const longDate = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '—';
-
-const dateTime = (iso: string) =>
-  new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
 export default function ProfilePage() {
   const user = useAuthStore((s) => s.user);
@@ -26,57 +34,47 @@ export default function ProfilePage() {
   const { tasks, projects, taskActivity, taskActivityLoaded, fetchTaskActivity } = useTaskStore();
   const taskStatuses = useTaskStatuses();
   const { setSelectedTaskId } = useUiStore();
-  const [taskFilter, setTaskFilter] = useState<TaskFilter>('all');
+  const [detail, setDetail] = useState<{ title: string; tasks: Task[] } | null>(null);
 
   useEffect(() => {
     if (workspace && !taskActivityLoaded) void fetchTaskActivity(workspace.id);
   }, [workspace, taskActivityLoaded, fetchTaskActivity]);
 
   const isOwner = me?.role === 'owner';
-  const completedKey = 'completed';
+  const now = Date.now();
 
   const myTasks = useMemo(() => (user ? tasks.filter((t) => t.assigneeId === user.id) : []), [tasks, user]);
-  const now = Date.now();
-  const stats = {
-    assigned: myTasks.length,
-    completed: myTasks.filter((t) => t.status === completedKey).length,
-    open: myTasks.filter((t) => t.status !== completedKey).length,
-    overdue: myTasks.filter((t) => t.status !== completedKey && t.dueDate && new Date(t.dueDate).getTime() < now).length,
+
+  const bucketOf = (t: Task): Bucket => {
+    if (t.status === COMPLETED) return 'completed';
+    if (t.dueDate && new Date(t.dueDate).getTime() < now) return 'overdue';
+    if (t.status === 'in_progress') return 'in_progress';
+    return 'pending';
   };
 
-  const isOverdue = (t: (typeof myTasks)[number]) =>
-    t.status !== completedKey && !!t.dueDate && new Date(t.dueDate).getTime() < now;
+  const bucketCounts: Record<Bucket, number> = { completed: 0, in_progress: 0, pending: 0, overdue: 0 };
+  for (const t of myTasks) bucketCounts[bucketOf(t)] += 1;
 
-  const shownTasks = useMemo(() => {
-    const list = myTasks.filter((t) => {
-      if (taskFilter === 'open') return t.status !== completedKey;
-      if (taskFilter === 'completed') return t.status === completedKey;
-      if (taskFilter === 'overdue') return isOverdue(t);
-      return true;
-    });
-    return [...list].sort((a, b) => {
-      const ac = a.status === completedKey ? 1 : 0;
-      const bc = b.status === completedKey ? 1 : 0;
-      if (ac !== bc) return ac - bc; // open tasks first
-      const ad = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
-      const bd = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
-      return ad - bd; // soonest due first
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [myTasks, taskFilter]);
+  const slices: Slice[] = BUCKET_META
+    .map((b) => ({ key: b.key, label: b.label, value: bucketCounts[b.key] }))
+    .filter((s) => s.value > 0);
+
+  const openBucketDetail = (slice: Slice) => {
+    const key = slice.key as Bucket;
+    setDetail({ title: `${slice.label} — your tasks`, tasks: myTasks.filter((t) => bucketOf(t) === key) });
+  };
 
   const myActivity = useMemo(
-    () => (user ? taskActivity.filter((e) => e.actor?.id === user.id).slice(0, 12) : []),
+    () => (user ? taskActivity.filter((e) => e.actor?.id === user.id) : []),
     [taskActivity, user],
   );
+  const liveTaskIds = useMemo(() => new Set(tasks.map((t) => t.id)), [tasks]);
 
-  const statusLabel = (k: string) => taskStatuses.find((s) => s.key === k)?.label ?? k;
   const projectName = (id: string | null) => (id ? (projects.find((p) => p.id === id)?.name ?? 'a project') : 'No project');
+  const statusLabel = (k: string) => taskStatuses.find((s) => s.key === k)?.label ?? k;
   const memberName = (id: string) => members.find((m) => m.userId === id)?.user?.fullName ?? 'another member';
 
-  if (!user) {
-    return <div className="p-6 text-sm text-text-secondary">Not signed in.</div>;
-  }
+  if (!user) return <div className="p-6 text-sm text-text-secondary">Not signed in.</div>;
 
   return (
     <div className="flex flex-col h-full">
@@ -150,100 +148,64 @@ export default function ProfilePage() {
           )}
         </section>
 
-        {/* Task stats + breakdown */}
+        {/* Security */}
+        <TwoFactorPanel />
+
+        {/* Task distribution */}
         <section>
           <h2 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2.5">Your tasks</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            {([
-              { key: 'all', label: 'Assigned to you', value: stats.assigned, icon: ListChecks, tone: 'text-text-primary' },
-              { key: 'completed', label: 'Completed', value: stats.completed, icon: CircleCheck, tone: 'text-accent-green' },
-              { key: 'open', label: 'Open', value: stats.open, icon: CircleDot, tone: 'text-accent-blue' },
-              { key: 'overdue', label: 'Overdue', value: stats.overdue, icon: AlertTriangle, tone: 'text-accent-red' },
-            ] as { key: TaskFilter; label: string; value: number; icon: typeof ListChecks; tone: string }[]).map((s) => (
-              <button
-                key={s.key}
-                onClick={() => setTaskFilter(s.key)}
-                aria-pressed={taskFilter === s.key}
-                className={`bg-surface border rounded-xl p-4 text-left transition-colors ${
-                  taskFilter === s.key ? 'border-accent-purple ring-1 ring-accent-purple/30' : 'border-border hover:border-accent-purple/40'
-                }`}
-              >
-                <div className="flex items-center gap-1.5 mb-2">
-                  <s.icon size={12} className="text-text-disabled" />
-                  <span className="text-xs font-medium text-text-secondary">{s.label}</span>
-                </div>
-                <p className={`text-2xl font-bold ${s.tone}`}>{s.value}</p>
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-4 bg-surface border border-border rounded-xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
-              <span className="text-xs font-medium text-text-secondary">
-                {taskFilter === 'all' ? 'All tasks assigned to you' :
-                 taskFilter === 'open' ? 'Your open tasks' :
-                 taskFilter === 'completed' ? 'Tasks you’ve completed' : 'Your overdue tasks'}
-              </span>
-              <span className="text-[11px] text-text-disabled tabular-nums">{shownTasks.length}</span>
-            </div>
-            {shownTasks.length === 0 ? (
-              <p className="px-4 py-6 text-sm text-text-secondary text-center">Nothing here.</p>
+          <div className="bg-surface border border-border rounded-xl p-5">
+            {myTasks.length === 0 ? (
+              <p className="text-sm text-text-secondary text-center py-6">No tasks are assigned to you yet.</p>
             ) : (
-              <ul className="divide-y divide-border">
-                {shownTasks.map((t) => {
-                  const overdue = isOverdue(t);
-                  return (
-                    <li key={t.id}>
-                      <button
-                        onClick={() => setSelectedTaskId(t.id)}
-                        className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-black/[0.02] transition-colors"
-                      >
-                        <span className={`text-sm truncate flex-1 min-w-0 ${t.status === completedKey ? 'text-text-secondary line-through' : 'text-text-primary'}`}>
-                          {t.name}
-                        </span>
-                        <span className="hidden sm:block text-[11px] text-text-secondary truncate max-w-[9rem] shrink-0">
-                          {projectName(t.projectId)}
-                        </span>
-                        {t.dueDate && (
-                          <span className={`text-[11px] shrink-0 tabular-nums ${overdue ? 'text-accent-red font-medium' : 'text-text-secondary'}`}>
-                            {shortDate(t.dueDate)}
-                          </span>
-                        )}
-                        <StatusPill statuses={taskStatuses} status={t.status} size="sm" />
-                        <ChevronRight size={14} className="text-text-disabled shrink-0" />
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
+              <DonutChart
+                data={slices}
+                centerLabel="assigned"
+                onSelect={openBucketDetail}
+                hint="Click a category to see those tasks"
+              />
             )}
           </div>
         </section>
 
         {/* Recent activity */}
         <section>
-          <h2 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2.5">Your recent activity</h2>
-          {myActivity.length === 0 ? (
-            <p className="text-sm text-text-secondary bg-surface border border-border rounded-xl px-4 py-6 text-center">
-              You haven't made any changes yet.
-            </p>
-          ) : (
-            <div className="bg-surface border border-border rounded-xl divide-y divide-border">
-              {myActivity.map((e) => (
-                <div key={e.id} className="px-4 py-3">
-                  <p className="text-sm text-text-primary leading-snug">
-                    <span className="text-text-secondary">You {describeTaskActivity(e, statusLabel, projectName, memberName)}</span>{' '}
-                    <span className="font-medium">“{e.taskName}”</span>
-                  </p>
-                  <p className="text-[11px] text-text-secondary mt-0.5">
-                    {projectName(e.projectId)} · {dateTime(e.createdAt)}
-                  </p>
-                </div>
-              ))}
-            </div>
-          )}
+          <div className="flex items-center justify-between mb-2.5">
+            <h2 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Your recent activity</h2>
+            <span className="text-[11px] text-text-disabled">Right-click an activity to delete it</span>
+          </div>
+          <div className="bg-surface border border-border rounded-xl overflow-hidden">
+            {!taskActivityLoaded ? (
+              <p className="text-sm text-text-secondary px-4 py-8 text-center">Loading activity…</p>
+            ) : (
+              <ActivityFeed
+                entries={myActivity}
+                workspaceId={workspace?.id ?? ''}
+                selfActorId={user.id}
+                paginated
+                pageSize={10}
+                onOpenTask={setSelectedTaskId}
+                liveTaskIds={liveTaskIds}
+                statusLabel={statusLabel}
+                projectName={projectName}
+                memberName={memberName}
+                emptyText="You haven't made any changes yet."
+              />
+            )}
+          </div>
         </section>
       </div>
+
+      {detail && (
+        <CategoryDetailModal
+          title={detail.title}
+          tasks={detail.tasks}
+          totalTasks={myTasks.length}
+          onClose={() => setDetail(null)}
+          onOpenTask={setSelectedTaskId}
+          backLabel="Back to profile"
+        />
+      )}
     </div>
   );
 }

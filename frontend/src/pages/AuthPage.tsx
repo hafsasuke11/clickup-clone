@@ -5,9 +5,12 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Mail, Lock, ArrowRight, Sparkles, User, Building2,
-  Eye, EyeOff, AlertCircle, UserPlus,
+  Eye, EyeOff, AlertCircle, UserPlus, ShieldCheck,
 } from 'lucide-react';
-import { apiSignup, apiLogin, getInviteInfo, acceptInvite, type InviteInfo } from '@/utils/api';
+import {
+  apiSignup, apiLogin, apiLogin2fa, apiLogin2faResend, isTwoFactorChallenge,
+  getInviteInfo, acceptInvite, type InviteInfo,
+} from '@/utils/api';
 import { useAuthStore } from '@/store/authStore';
 import { useUiStore } from '@/store/uiStore';
 import { signupSchema, loginSchema, type SignupFormData, type LoginFormData } from '@/utils/authValidation';
@@ -178,6 +181,98 @@ function SpinnerIcon() {
   );
 }
 
+// ─── 2FA verification step (login) ─────────────────────────────
+function TwoFactorLoginStep({
+  email, initialCooldownMs, onVerify, onResend, onBack, loading, error, inputClassName, gradientStyle,
+}: {
+  email: string;
+  initialCooldownMs: number;
+  onVerify: (code: string) => void;
+  /** Resolves to the new cooldown in ms, or throws with a message. */
+  onResend: () => Promise<number>;
+  onBack: () => void;
+  loading: boolean;
+  error: string;
+  inputClassName: string;
+  gradientStyle: React.CSSProperties;
+}) {
+  const [code, setCode] = useState('');
+  const [until, setUntil] = useState(() => Date.now() + initialCooldownMs);
+  const [, tick] = useState(0);
+  const [resendMsg, setResendMsg] = useState('');
+
+  useEffect(() => {
+    if (until <= Date.now()) return;
+    const id = setInterval(() => tick((n) => n + 1), 500);
+    return () => clearInterval(id);
+  }, [until]);
+  const secondsLeft = Math.max(0, Math.ceil((until - Date.now()) / 1000));
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (code.length === 6) onVerify(code);
+  };
+
+  const resend = async () => {
+    setResendMsg('');
+    try {
+      const ms = await onResend();
+      setUntil(Date.now() + ms);
+      setResendMsg('A new code is on its way.');
+    } catch (err) {
+      setResendMsg(err instanceof Error ? err.message : 'Could not resend the code.');
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="space-y-4" noValidate>
+      <div className="flex items-start gap-2.5 bg-accent-purple/10 border border-accent-purple/25 text-text-primary p-3.5 rounded-xl text-sm">
+        <ShieldCheck size={16} className="shrink-0 mt-0.5 text-accent-purple" />
+        <span>We emailed a 6-digit code to <b>{email}</b>. It expires in 5 minutes.</span>
+      </div>
+
+      {error && (
+        <div className="flex items-start gap-2.5 bg-accent-red/10 border border-accent-red/25 text-accent-red p-3.5 rounded-xl text-sm">
+          <AlertCircle size={15} className="shrink-0 mt-0.5" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <Field label="Verification code" icon={<Lock size={16} />}>
+        <input
+          type="text" inputMode="numeric" autoComplete="one-time-code" autoFocus maxLength={6} placeholder="123456"
+          className={`${inputClassName} tracking-[0.4em] font-mono`}
+          value={code}
+          onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+        />
+      </Field>
+
+      <button
+        type="submit" disabled={loading || code.length !== 6}
+        className="w-full py-3 rounded-xl text-sm font-semibold text-white flex items-center justify-center gap-2 transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed mt-2"
+        style={gradientStyle}
+      >
+        {loading ? <SpinnerIcon /> : <><span>Verify</span><ArrowRight size={16} /></>}
+      </button>
+
+      <div className="flex items-center justify-between text-xs">
+        <button
+          type="button"
+          disabled={secondsLeft > 0}
+          onClick={() => void resend()}
+          className="text-accent-purple font-medium hover:text-purple-700 disabled:text-text-disabled disabled:cursor-default transition-colors"
+        >
+          {secondsLeft > 0 ? `Resend code in ${secondsLeft}s` : 'Resend code'}
+        </button>
+        <button type="button" onClick={onBack} className="text-text-secondary hover:text-text-primary transition-colors">
+          Back to sign in
+        </button>
+      </div>
+      {resendMsg && <p className="text-xs text-text-secondary">{resendMsg}</p>}
+    </form>
+  );
+}
+
 // ─── Main AuthPage ──────────────────────────────────────────────
 export default function AuthPage() {
   const navigate = useNavigate();
@@ -191,6 +286,12 @@ export default function AuthPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const addToast = useUiStore((s) => s.addToast);
+
+  // 2FA login step: set once the password is accepted but the emailed code is
+  // still pending.
+  const [twoFA, setTwoFA] = useState<{ challenge: string; email: string; cooldownMs: number } | null>(null);
+  const [twoFALoading, setTwoFALoading] = useState(false);
+  const [twoFAError, setTwoFAError] = useState('');
 
   const [searchParams] = useSearchParams();
   const inviteToken = searchParams.get('invite');
@@ -208,6 +309,8 @@ export default function AuthPage() {
 
   useEffect(() => {
     setError('');
+    setTwoFA(null);
+    setTwoFAError('');
     signupForm.reset({ fullName: '', company: '', email: inviteInfo?.email ?? '', password: '', confirmPassword: '', agreedToTerms: false });
     loginForm.reset({ email: inviteInfo?.email ?? '', password: '' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -244,25 +347,56 @@ export default function AuthPage() {
     }
   };
 
+  const finishLogin = async (token: string, user: Parameters<typeof setAuth>[1]) => {
+    setAuth(token, user);
+    if (inviteToken) {
+      try {
+        await acceptInvite(inviteToken);
+      } catch (err) {
+        addToast(err instanceof Error ? err.message : 'Could not join that workspace.', 'error');
+      }
+    }
+    const from = (location.state as { from?: string })?.from;
+    navigate(from && from.startsWith('/app') ? from : '/app');
+  };
+
   const onSubmitLogin = async (data: LoginFormData) => {
     setLoading(true); setError('');
     try {
       const result = await apiLogin({ email: data.email.trim(), password: data.password });
-      setAuth(result.token, result.user);
-      if (inviteToken) {
-        try {
-          await acceptInvite(inviteToken);
-        } catch (err) {
-          addToast(err instanceof Error ? err.message : 'Could not join that workspace.', 'error');
-        }
+      if (isTwoFactorChallenge(result)) {
+        // Password OK — a code was emailed. Show the verification step.
+        if (result.devCode) console.info('[2FA] Email OTP (dev only):', result.devCode);
+        setTwoFAError('');
+        setTwoFA({ challenge: result.challenge, email: result.email, cooldownMs: result.cooldownMs });
+        return;
       }
-      const from = (location.state as { from?: string })?.from;
-      navigate(from && from.startsWith('/app') ? from : '/app');
+      await finishLogin(result.token, result.user);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleVerify2FA = async (code: string) => {
+    if (!twoFA) return;
+    setTwoFALoading(true); setTwoFAError('');
+    try {
+      const res = await apiLogin2fa({ challenge: twoFA.challenge, code });
+      await finishLogin(res.token, res.user);
+    } catch (err: unknown) {
+      setTwoFAError(err instanceof Error ? err.message : 'Verification failed. Please try again.');
+    } finally {
+      setTwoFALoading(false);
+    }
+  };
+
+  const handleResend2FA = async (): Promise<number> => {
+    if (!twoFA) throw new Error('Please sign in again.');
+    const res = await apiLogin2faResend({ challenge: twoFA.challenge });
+    if (res.devCode) console.info('[2FA] Email OTP (dev only):', res.devCode);
+    return res.cooldownMs;
   };
 
   const inputCls = (hasIcon = true, hasError = false) =>
@@ -291,9 +425,15 @@ export default function AuthPage() {
               <span className="font-bold text-xl text-text-primary">ClickUp</span>
             </Link>
 
-            <h1 className="text-[28px] font-bold text-text-primary mb-1.5">{isSignUp ? 'Create your account' : 'Welcome back'}</h1>
+            <h1 className="text-[28px] font-bold text-text-primary mb-1.5">
+              {twoFA && !isSignUp
+                ? 'Two-factor authentication'
+                : isSignUp ? 'Create your account' : 'Welcome back'}
+            </h1>
             <p className="text-sm text-text-secondary mb-7">
-              {isSignUp ? 'Start for free. No credit card needed.' : 'Enter your details to access your workspace.'}
+              {twoFA && !isSignUp
+                ? 'One more step to keep your account secure.'
+                : isSignUp ? 'Start for free. No credit card needed.' : 'Enter your details to access your workspace.'}
             </p>
 
             {addingAccount && (
@@ -383,7 +523,7 @@ export default function AuthPage() {
                   {loading ? <SpinnerIcon /> : <><span>Create Account</span><ArrowRight size={16} /></>}
                 </button>
               </form>
-            ) : (
+            ) : twoFA ? null : (
               <form onSubmit={loginForm.handleSubmit(onSubmitLogin)} className="space-y-4" noValidate>
                 <Field label="Email" icon={<Mail size={16} />} required error={loginForm.formState.errors.email?.message}>
                   <input type="email" placeholder="you@company.com" autoComplete="email" readOnly={!!inviteInfo}
@@ -407,15 +547,31 @@ export default function AuthPage() {
               </form>
             )}
 
-            <p className="mt-6 text-center text-sm text-text-secondary">
-              {isSignUp ? 'Already have an account?' : "Don't have an account?"}{' '}
-              <Link
-                to={`${isSignUp ? '/login' : '/signup'}${inviteToken ? `?invite=${inviteToken}` : ''}`}
-                className="text-accent-purple font-semibold hover:text-purple-700 transition-colors"
-              >
-                {isSignUp ? 'Sign in' : 'Sign up free'}
-              </Link>
-            </p>
+            {twoFA && !isSignUp && (
+              <TwoFactorLoginStep
+                email={twoFA.email}
+                initialCooldownMs={twoFA.cooldownMs}
+                onVerify={handleVerify2FA}
+                onResend={handleResend2FA}
+                onBack={() => { setTwoFA(null); setTwoFAError(''); }}
+                loading={twoFALoading}
+                error={twoFAError}
+                inputClassName={inputCls(true)}
+                gradientStyle={{ background: 'linear-gradient(135deg, #6D4FE0 0%, #5A3FC0 100%)', boxShadow: '0 4px 20px rgba(109,79,224,0.3)' }}
+              />
+            )}
+
+            {!(twoFA && !isSignUp) && (
+              <p className="mt-6 text-center text-sm text-text-secondary">
+                {isSignUp ? 'Already have an account?' : "Don't have an account?"}{' '}
+                <Link
+                  to={`${isSignUp ? '/login' : '/signup'}${inviteToken ? `?invite=${inviteToken}` : ''}`}
+                  className="text-accent-purple font-semibold hover:text-purple-700 transition-colors"
+                >
+                  {isSignUp ? 'Sign in' : 'Sign up free'}
+                </Link>
+              </p>
+            )}
           </motion.div>
         </AnimatePresence>
       </div>

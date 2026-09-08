@@ -7,6 +7,11 @@ const userSchema = new Schema(
     passwordHash: { type: String, required: true },
     fullName: { type: String, required: true, trim: true },
     company: { type: String, default: '' },
+
+    // ── Two-factor auth (email OTP) ────────────────────────────────────────
+    // When on, sign-in requires a 6-digit code emailed to `email`. The codes
+    // themselves live in the EmailOtp collection.
+    twoFactorEnabled: { type: Boolean, default: false },
   },
   { timestamps: true, toJSON: { transform: docToJSON } },
 );

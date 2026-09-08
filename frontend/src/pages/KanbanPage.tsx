@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   DndContext, DragOverlay, PointerSensor, useSensor, useSensors, useDroppable, closestCorners,
 } from '@dnd-kit/core';
 import type { DragEndEvent, DragOverEvent, DragStartEvent } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus, Calendar, LayoutDashboard, CalendarRange, X, Eye } from 'lucide-react';
+import { Plus, Calendar, LayoutDashboard, CalendarRange, X, MoreHorizontal } from 'lucide-react';
 import { useTaskStore, getVisibleTasks } from '@/store/taskStore';
 import { useCan } from '@/utils/permissions';
 import { useWorkspaceStore, useTaskStatuses } from '@/store/workspaceStore';
@@ -13,6 +13,7 @@ import { useUiStore } from '@/store/uiStore';
 import { FilterButton, AssigneeButton, SortButton } from '@/components/TaskToolbar';
 import { StatusPill, StatusDot } from '@/components/TaskStatusPill';
 import { StatusColumnMenu, AddStatusButton } from '@/components/StatusManager';
+import TaskContextMenu from '@/components/TaskContextMenu';
 import { describeTaskActivity } from '@/utils/activityText';
 import { initialsOf, colorFor } from '@/utils/avatarHelpers';
 import type { Task, TaskPriority, WorkspaceStatus } from '@/utils/types';
@@ -44,11 +45,11 @@ const columnOf = (id: string, cols: Columns): string | null => {
 };
 
 /**
- * The read-only "quick peek" that opens under a card when its eye icon is
- * tapped. Editing lives in the full drawer (a click on the card body opens it);
- * this panel is a glanceable summary only.
+ * The read-only "quick peek" that opens under a card via the ⋯ menu's "View".
+ * Editing lives in the full drawer (a click on the card body opens it); this
+ * panel is a glanceable summary only.
  */
-function TaskCardDetails({ task }: { task: Task }) {
+function TaskCardDetails({ task, onClose }: { task: Task; onClose: () => void }) {
   const { projects, taskActivity } = useTaskStore();
   const { members } = useWorkspaceStore();
   const statuses = useTaskStatuses();
@@ -56,13 +57,28 @@ function TaskCardDetails({ task }: { task: Task }) {
   const assignee = members.find((m) => m.userId === task.assigneeId)?.user;
   const project = projects.find((p) => p.id === task.projectId);
   const history = taskActivity.filter((e) => e.taskId === task.id);
+  const completedAt =
+    task.status === 'completed'
+      ? (history.filter((e) => e.action === 'task_completed').map((e) => e.createdAt).sort().at(-1) ?? task.updatedAt)
+      : null;
   const statusLabel = (k: string) => statuses.find((s) => s.key === k)?.label ?? k;
   const projectNameOf = (id: string | null) => (id ? (projects.find((p) => p.id === id)?.name ?? 'a project') : 'No project');
   const memberName = (id: string) => members.find((m) => m.userId === id)?.user?.fullName ?? 'another member';
 
   return (
     <div className="border-t border-border bg-black/[0.015] px-3 py-3 space-y-3 text-xs cursor-default">
-      <p className="text-sm font-semibold text-text-primary break-words">{task.name}</p>
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-sm font-semibold text-text-primary break-words">{task.name}</p>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onClose(); }}
+          title="Hide quick view"
+          aria-label="Hide quick view"
+          className="shrink-0 -mt-0.5 -mr-1 p-1 rounded-md text-text-disabled hover:text-text-secondary hover:bg-black/[0.04] transition-colors"
+        >
+          <X size={13} />
+        </button>
+      </div>
 
       <div>
         <p className="text-[10px] uppercase tracking-wider text-text-secondary mb-1">Description</p>
@@ -96,6 +112,13 @@ function TaskCardDetails({ task }: { task: Task }) {
         <dt className="text-text-secondary">Due date</dt>
         <dd className="text-text-primary">{task.dueDate ? fmt(task.dueDate) : <span className="text-text-disabled">None</span>}</dd>
 
+        {completedAt && (
+          <>
+            <dt className="text-text-secondary">Completed</dt>
+            <dd className="text-text-primary">{dateTime(completedAt)}</dd>
+          </>
+        )}
+
         <dt className="text-text-secondary">Created</dt>
         <dd className="text-text-primary">{fmt(task.createdAt)}</dd>
 
@@ -125,7 +148,14 @@ function TaskCardDetails({ task }: { task: Task }) {
   );
 }
 
-function SortableCard({ task, expanded, canDrag, onToggle }: { task: Task; expanded: boolean; canDrag: boolean; onToggle: () => void }) {
+function SortableCard({ task, expanded, canDrag, highlight, onToggle, onOpenMenu }: {
+  task: Task;
+  expanded: boolean;
+  canDrag: boolean;
+  highlight: boolean;
+  onToggle: () => void;
+  onOpenMenu: (x: number, y: number) => void;
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id, disabled: !canDrag });
   const { members } = useWorkspaceStore();
   const { setSelectedTaskId } = useUiStore();
@@ -135,9 +165,15 @@ function SortableCard({ task, expanded, canDrag, onToggle }: { task: Task; expan
   return (
     <div
       ref={setNodeRef}
+      data-task-id={task.id}
+      onContextMenu={(e) => { e.preventDefault(); onOpenMenu(e.clientX, e.clientY); }}
       style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0 : 1 }}
-      className={`bg-surface border rounded-xl transition-all select-none ${
-        expanded ? 'border-accent-purple/40 shadow-sm' : 'border-border hover:border-accent-purple/40 hover:shadow-sm'
+      className={`bg-surface border rounded-xl transition-all select-none scroll-mt-6 ${
+        highlight
+          ? 'border-accent-purple relative z-20 animate-task-flash'
+          : expanded
+            ? 'border-accent-purple/40 shadow-sm'
+            : 'border-border hover:border-accent-purple/40 hover:shadow-sm'
       }`}
     >
       {/* Compact header — click opens the full drawer; also the drag handle */}
@@ -148,14 +184,16 @@ function SortableCard({ task, expanded, canDrag, onToggle }: { task: Task; expan
             type="button"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); onToggle(); }}
-            title={expanded ? 'Hide quick view' : 'Quick view'}
-            aria-label={expanded ? 'Hide quick view' : 'Quick view'}
-            aria-pressed={expanded}
+            title="Task details"
+            aria-label="Task details"
+            aria-expanded={expanded}
             className={`shrink-0 -mt-0.5 -mr-1 p-1 rounded-md transition-colors ${
-              expanded ? 'text-accent-purple bg-accent-purple/10' : 'text-text-disabled hover:text-text-secondary hover:bg-black/[0.04]'
+              expanded
+                ? 'text-accent-purple bg-accent-purple/10'
+                : 'text-text-disabled hover:text-text-secondary hover:bg-black/[0.04]'
             }`}
           >
-            <Eye size={13} />
+            <MoreHorizontal size={15} />
           </button>
         </div>
         <div className="flex items-center justify-between gap-1.5 pt-1 flex-wrap">
@@ -173,21 +211,23 @@ function SortableCard({ task, expanded, canDrag, onToggle }: { task: Task; expan
         </div>
       </div>
 
-      {expanded && <TaskCardDetails task={task} />}
+      {expanded && <TaskCardDetails task={task} onClose={onToggle} />}
     </div>
   );
 }
 
 function DroppableColumn({
-  status, statuses, taskIds, taskById, expandedId, canDrag, onToggleExpand,
+  status, statuses, taskIds, taskById, expandedId, highlightId, canDrag, onToggleExpand, onOpenMenu,
 }: {
   status: WorkspaceStatus;
   statuses: WorkspaceStatus[];
   taskIds: string[];
   taskById: Map<string, Task>;
   expandedId: string | null;
+  highlightId: string | null;
   canDrag: boolean;
   onToggleExpand: (id: string) => void;
+  onOpenMenu: (id: string, x: number, y: number) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status.key });
   return (
@@ -211,7 +251,15 @@ function DroppableColumn({
           {taskIds.map((id) => {
             const t = taskById.get(id);
             return t ? (
-              <SortableCard key={id} task={t} expanded={expandedId === id} canDrag={canDrag} onToggle={() => onToggleExpand(id)} />
+              <SortableCard
+                key={id}
+                task={t}
+                expanded={expandedId === id}
+                highlight={highlightId === id}
+                canDrag={canDrag}
+                onToggle={() => onToggleExpand(id)}
+                onOpenMenu={(x, y) => onOpenMenu(id, x, y)}
+              />
             ) : null;
           })}
         </div>
@@ -243,17 +291,23 @@ function EmptyState() {
 
 export default function KanbanPage() {
   const store = useTaskStore();
-  const { tasks, reorderTasks, fetchTaskActivity } = store;
+  const { tasks, reorderTasks, fetchTaskActivity, clearTaskFilters } = store;
   const canManage = useCan('manageTasks');
   const { workspace } = useWorkspaceStore();
   const statuses = useTaskStatuses();
-  const { setCreateModalOpen } = useUiStore();
+  const { setCreateModalOpen, setSelectedTaskId } = useUiStore();
+  const highlightTaskId = useUiStore((s) => s.highlightTaskId);
+  const setHighlightTaskId = useUiStore((s) => s.setHighlightTaskId);
   const visibleTasks = getVisibleTasks(store);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [dragBoard, setDragBoard] = useState<Columns | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [flashId, setFlashId] = useState<string | null>(null);
+  const [pendingFlash, setPendingFlash] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const boardRef = useRef<HTMLDivElement>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   // Load activity so an expanded card can show its history.
@@ -262,8 +316,47 @@ export default function KanbanPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspace?.id]);
 
+  // A task name was clicked in the Activity feed: move that signal into local
+  // state right away and clear the shared store value so it can't re-fire.
+  useEffect(() => {
+    if (!highlightTaskId) return;
+    setPendingFlash(highlightTaskId);
+    setHighlightTaskId(null);
+  }, [highlightTaskId, setHighlightTaskId]);
+
   const rangeActive = Boolean(from && to && from <= to);
   const now = Date.now();
+
+  // Handle a pending highlight: drop any filter or workload range that could
+  // hide the task, then scroll it into view and start the flash.
+  useEffect(() => {
+    if (!pendingFlash) return;
+    const id = pendingFlash;
+    if (!tasks.some((t) => t.id === id)) { setPendingFlash(null); return; }
+
+    clearTaskFilters();
+    setFrom('');
+    setTo('');
+
+    const tFlash = window.setTimeout(() => {
+      boardRef.current
+        ?.querySelector<HTMLElement>(`[data-task-id="${id}"]`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setFlashId(id);
+      setPendingFlash(null);
+    }, 260);
+    return () => clearTimeout(tFlash);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingFlash, tasks]);
+
+  // The flash is a one-shot: it starts the moment the task is scrolled into
+  // view, holds for 5s (the CSS animation eases out over its final stretch),
+  // then the highlight is dropped and the card returns to normal.
+  useEffect(() => {
+    if (!flashId) return;
+    const t = window.setTimeout(() => setFlashId(null), 5000);
+    return () => clearTimeout(t);
+  }, [flashId]);
 
   // When a Workload range is set, the board only shows tasks whose due date
   // falls inside that period (tasks with no due date are hidden).
@@ -352,6 +445,12 @@ export default function KanbanPage() {
 
   const dateCls = 'bg-background border border-border rounded-lg px-2 py-1 text-xs text-text-primary focus:outline-none focus:border-accent-purple transition-colors';
   const activeTask = activeId ? taskById.get(activeId) : null;
+  const menuTask = menu ? taskById.get(menu.id) ?? null : null;
+
+  // If the task behind an open menu disappears (deleted elsewhere), drop the menu.
+  useEffect(() => {
+    if (menu && !menuTask) setMenu(null);
+  }, [menu, menuTask]);
 
   return (
     <div className="flex flex-col h-full">
@@ -406,6 +505,7 @@ export default function KanbanPage() {
             <p className="px-4 py-6 text-sm text-text-secondary">No tasks are due between {fmt(from)} and {fmt(to)}.</p>
           )}
           <div
+            ref={boardRef}
             className="grid gap-3 p-4 flex-1 min-h-0 overflow-y-auto"
             style={{ gridTemplateColumns: `repeat(${statuses.length || 1}, minmax(0, 1fr))` }}
           >
@@ -417,11 +517,14 @@ export default function KanbanPage() {
                 taskIds={board[s.key] ?? []}
                 taskById={taskById}
                 expandedId={expandedId}
+                highlightId={flashId}
                 canDrag={canManage}
                 onToggleExpand={(id) => setExpandedId((cur) => (cur === id ? null : id))}
+                onOpenMenu={(id, x, y) => setMenu({ id, x, y })}
               />
             ))}
           </div>
+
           <DragOverlay>
             {activeTask && (
               <div className="bg-surface border border-accent-purple/40 rounded-xl p-3 w-[240px] shadow-2xl rotate-2 flex items-center gap-2">
@@ -431,6 +534,17 @@ export default function KanbanPage() {
             )}
           </DragOverlay>
         </DndContext>
+      )}
+
+      {menu && menuTask && (
+        <TaskContextMenu
+          task={menuTask}
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          onView={() => setExpandedId(menu.id)}
+          onEdit={() => setSelectedTaskId(menu.id)}
+        />
       )}
     </div>
   );

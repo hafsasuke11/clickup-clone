@@ -4,6 +4,8 @@ export interface User {
   fullName: string;
   company: string;
   createdAt: string;
+  /** Whether the account has an authenticator app (TOTP) enrolled. */
+  twoFactorEnabled?: boolean;
 }
 
 export type WorkspaceRole = 'owner' | 'member';
@@ -78,7 +80,11 @@ export type AuditAction =
   | 'ownership_transferred'
   | 'permissions_changed'
   | 'project_created'
-  | 'project_deleted';
+  | 'project_updated'
+  | 'project_deleted'
+  | 'status_created'
+  | 'status_updated'
+  | 'status_deleted';
 
 export interface ActivityEntry {
   id: string;
@@ -112,6 +118,27 @@ export interface TaskActivityEntry {
   meta: Record<string, unknown>;
   createdAt: string;
   actor: User | null;
+}
+
+/**
+ * One row of the app-wide activity timeline (Activity page), from
+ * `GET /api/workspaces/:id/overall-activity`. It is either a task activity
+ * (`source: 'task'`) or an audit-log entry (`source: 'audit'`) — project,
+ * status, member, permission and workspace changes.
+ */
+export interface OverallActivityEntry {
+  id: string;
+  source: 'task' | 'audit';
+  action: TaskActivityAction | AuditAction;
+  actor: User | null;
+  createdAt: string;
+  meta: Record<string, unknown>;
+  /** Present on `source: 'task'` rows. */
+  taskId?: string | null;
+  taskName?: string | null;
+  projectId?: string | null;
+  /** Present on `source: 'audit'` rows that name another member. */
+  target?: User | null;
 }
 
 export type ProjectPriority = 'urgent' | 'high' | 'normal' | 'low';

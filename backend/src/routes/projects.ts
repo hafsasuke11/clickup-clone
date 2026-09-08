@@ -106,12 +106,29 @@ router.patch('/:projectId', requirePermission('manageProjects'), async (req: Req
   if (startDate !== undefined) updates.startDate = startDate || null;
   if (dueDate !== undefined) updates.dueDate = dueDate || null;
 
+  const before = await Project.findOne({ _id: req.params.projectId, workspaceId: req.params.workspaceId });
+  if (!before) return res.status(404).json({ error: 'Project not found' });
+
   const project = await Project.findOneAndUpdate(
     { _id: req.params.projectId, workspaceId: req.params.workspaceId },
     updates,
     { new: true },
   );
   if (!project) return res.status(404).json({ error: 'Project not found' });
+
+  // Record which fields actually changed so the activity feed can describe the edit.
+  const changed = Object.keys(updates).filter(
+    (k) => String(before.get(k) ?? '') !== String(project.get(k) ?? ''),
+  );
+  if (changed.length) {
+    logActivity({
+      workspaceId: req.params.workspaceId,
+      actorId: req.userId!,
+      action: 'project_updated',
+      meta: { projectId: String(project._id), name: project.name, fields: changed },
+    });
+  }
+
   res.json({ project });
 });
 

@@ -23,7 +23,7 @@ function App() {
         <Route path="/invite/:token" element={<InviteAcceptPage />} />
 
         <Route path="/app" element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
-          <Route index element={<Navigate to="dashboard" replace />} />
+          <Route index element={<Navigate to="board" replace />} />
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="list" element={<ListPage />} />
           <Route path="board" element={<KanbanPage />} />

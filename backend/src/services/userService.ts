@@ -39,6 +39,7 @@ export function toPublicUser(user: {
   fullName: string;
   company: string;
   createdAt?: Date;
+  twoFactorEnabled?: boolean;
 }) {
   return {
     id: String(user._id),
@@ -46,5 +47,6 @@ export function toPublicUser(user: {
     fullName: user.fullName,
     company: user.company,
     createdAt: user.createdAt,
+    twoFactorEnabled: Boolean(user.twoFactorEnabled),
   };
 }

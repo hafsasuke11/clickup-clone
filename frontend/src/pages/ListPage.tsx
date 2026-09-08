@@ -1,19 +1,19 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   DndContext, PointerSensor, useSensor, useSensors, useDroppable, closestCorners,
 } from '@dnd-kit/core';
 import type { DragEndEvent, DragOverEvent } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus, ChevronDown, ChevronRight, CheckSquare, GripVertical, AlertTriangle } from 'lucide-react';
-import { useTaskStore, getVisibleTasks, findDuplicateTask, type DuplicateTaskInfo } from '@/store/taskStore';
+import { Plus, ChevronDown, ChevronRight, CheckSquare, GripVertical, CalendarRange, X } from 'lucide-react';
+import { useTaskStore, getVisibleTasks } from '@/store/taskStore';
 import { useCan } from '@/utils/permissions';
 import { useWorkspaceStore, useTaskStatuses } from '@/store/workspaceStore';
 import { useUiStore } from '@/store/uiStore';
 import { FilterButton, AssigneeButton, SortButton } from '@/components/TaskToolbar';
 import { StatusPill, StatusSelect } from '@/components/TaskStatusPill';
 import { AddStatusButton, StatusColumnMenu } from '@/components/StatusManager';
-import ConfirmDialog from '@/components/ConfirmDialog';
+import TaskContextMenu from '@/components/TaskContextMenu';
 import { initialsOf, colorFor } from '@/utils/avatarHelpers';
 import type { Member, Task, TaskPriority, TaskStatus, WorkspaceStatus } from '@/utils/types';
 
@@ -23,6 +23,11 @@ const priorityColors: Record<TaskPriority, string> = {
   normal: 'text-blue-700 bg-blue-50 border-blue-200',
   low: 'text-gray-600 bg-gray-50 border-gray-200',
 };
+
+const dayOf = (iso: string) => iso.split('T')[0];
+const fmtDay = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+const dateInputCls =
+  'bg-background border border-border rounded-lg px-2 py-1 text-xs text-text-primary focus:outline-none focus:border-accent-purple transition-colors';
 
 type Groups = Record<string, string[]>;
 
@@ -60,7 +65,7 @@ function EmptyState() {
 }
 
 function TaskRow({
-  task, statuses, members, canManage, onOpen, onStatusChange,
+  task, statuses, members, canManage, onOpen, onStatusChange, onOpenMenu,
 }: {
   task: Task;
   statuses: WorkspaceStatus[];
@@ -68,6 +73,7 @@ function TaskRow({
   canManage: boolean;
   onOpen: () => void;
   onStatusChange: (s: TaskStatus) => void;
+  onOpenMenu: (x: number, y: number) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id, disabled: !canManage });
   const due = task.dueDate ? new Date(task.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : null;
@@ -79,6 +85,7 @@ function TaskRow({
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0 : 1 }}
       onClick={onOpen}
+      onContextMenu={(e) => { e.preventDefault(); onOpenMenu(e.clientX, e.clientY); }}
       className="grid grid-cols-12 gap-3 px-4 py-3 border-b border-border last:border-0 hover:bg-black/[0.02] transition-colors items-center cursor-pointer group/row"
     >
       <div className="col-span-4 flex items-center gap-2 min-w-0">
@@ -120,8 +127,8 @@ function TaskRow({
 }
 
 function StatusGroup({
-  status, statuses, taskIds, taskById, members, canManage, collapsed, onToggle, isAdding,
-  newName, setNewName, onStartAdd, onCancelAdd, onCreate, onOpenTask, onStatusChange, duplicateHint,
+  status, statuses, taskIds, taskById, members, canManage, collapsed, onToggle,
+  onStartAdd, onOpenTask, onStatusChange, onOpenMenu,
 }: {
   status: WorkspaceStatus;
   statuses: WorkspaceStatus[];
@@ -131,15 +138,10 @@ function StatusGroup({
   canManage: boolean;
   collapsed: boolean;
   onToggle: () => void;
-  isAdding: boolean;
-  newName: string;
-  setNewName: (v: string) => void;
   onStartAdd: () => void;
-  onCancelAdd: () => void;
-  onCreate: () => void;
   onOpenTask: (id: string) => void;
   onStatusChange: (id: string, s: TaskStatus) => void;
-  duplicateHint: string | null;
+  onOpenMenu: (id: string, x: number, y: number) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status.key });
 
@@ -174,36 +176,17 @@ function StatusGroup({
                   canManage={canManage}
                   onOpen={() => onOpenTask(id)}
                   onStatusChange={(s) => onStatusChange(id, s)}
+                  onOpenMenu={(x, y) => onOpenMenu(id, x, y)}
                 />
               ) : null;
             })}
           </SortableContext>
-          {isAdding ? (
-            <div className="border-t border-border">
-              <div className="flex items-center gap-2 px-4 py-2.5">
-                <CheckSquare size={13} className="text-text-disabled" />
-                <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') onCreate();
-                    if (e.key === 'Escape') onCancelAdd();
-                  }}
-                  placeholder="Task name..."
-                  className="flex-1 bg-transparent text-sm text-text-primary placeholder:text-text-disabled focus:outline-none" />
-                <button onClick={onCancelAdd} className="text-xs text-text-secondary hover:text-text-primary">Cancel</button>
-              </div>
-              {duplicateHint && (
-                <p className="flex items-center gap-1.5 px-4 pb-2 -mt-1 text-[11px] text-accent-amber">
-                  <AlertTriangle size={12} className="shrink-0" />
-                  “{duplicateHint}” already exists in this group — pressing Enter will ask to confirm.
-                </p>
-              )}
-            </div>
-          ) : canManage ? (
+          {canManage && (
             <button onClick={onStartAdd}
               className="w-full px-4 py-2.5 text-left text-sm text-text-secondary hover:text-text-primary hover:bg-black/[0.02] transition-colors flex items-center gap-2">
               <Plus size={13} /> Add Task
             </button>
-          ) : null}
+          )}
         </div>
       )}
     </div>
@@ -212,18 +195,27 @@ function StatusGroup({
 
 export default function ListPage() {
   const store = useTaskStore();
-  const { tasks, createTask, updateTask, reorderTasks } = store;
+  const { tasks, updateTask, reorderTasks } = store;
   const { workspace, members } = useWorkspaceStore();
   const statuses = useTaskStatuses();
-  const { setSelectedTaskId } = useUiStore();
+  const { setSelectedTaskId, setCreateModalOpen, setCreateModalStatus } = useUiStore();
   const canManage = useCan('manageTasks');
   const visibleTasks = getVisibleTasks(store);
-  const [addingIn, setAddingIn] = useState<TaskStatus | null>(null);
-  const [newName, setNewName] = useState('');
   const [collapsed, setCollapsed] = useState<Set<TaskStatus>>(new Set());
   const [dragGroups, setDragGroups] = useState<Groups | null>(null);
-  const [dupPrompt, setDupPrompt] = useState<{ status: TaskStatus; info: DuplicateTaskInfo } | null>(null);
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  const rangeActive = Boolean(fromDate && toDate && fromDate <= toDate);
+
+  // The Due date filter narrows the list to tasks due within the range; tasks
+  // with no due date are hidden while it's active.
+  const rangedTasks = useMemo(() => {
+    if (!rangeActive) return visibleTasks;
+    return visibleTasks.filter((t) => t.dueDate && dayOf(t.dueDate) >= fromDate && dayOf(t.dueDate) <= toDate);
+  }, [visibleTasks, rangeActive, fromDate, toDate]);
 
   const taskById = useMemo(() => {
     const m = new Map<string, Task>();
@@ -231,7 +223,14 @@ export default function ListPage() {
     return m;
   }, [tasks]);
 
-  const derived = useMemo(() => buildGroups(statuses, visibleTasks), [statuses, visibleTasks]);
+  const menuTask = menu ? taskById.get(menu.id) ?? null : null;
+
+  // If the task behind an open menu disappears (deleted), drop the menu.
+  useEffect(() => {
+    if (menu && !menuTask) setMenu(null);
+  }, [menu, menuTask]);
+
+  const derived = useMemo(() => buildGroups(statuses, rangedTasks), [statuses, rangedTasks]);
   const groups = dragGroups ?? derived;
 
   const toggleCollapsed = (status: TaskStatus) => {
@@ -292,22 +291,48 @@ export default function ListPage() {
     setDragGroups(null);
   };
 
-  const createInStatus = async (status: TaskStatus, force = false) => {
-    if (!newName.trim() || !workspace) return;
-    const res = await createTask(workspace.id, { name: newName.trim(), status }, { force });
-    if ('duplicate' in res) {
-      setDupPrompt({ status, info: res.duplicate });
-      return;
-    }
-    setNewName('');
-    setAddingIn(null);
-    setDupPrompt(null);
+  // "Add Task" in a status group opens the full create-task modal (same one used
+  // everywhere else), with this group's status pre-selected so the new task
+  // lands in the right place.
+  const openCreateForStatus = (status: TaskStatus) => {
+    setCreateModalStatus(status);
+    setCreateModalOpen(true);
   };
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-end px-4 py-2 border-b border-border shrink-0">
-        <div className="flex items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-border shrink-0">
+        <div className="flex items-center gap-1.5 text-xs text-text-secondary">
+          <CalendarRange size={14} />
+          <span className="font-medium">Due date</span>
+          <input
+            type="date"
+            value={fromDate}
+            max={toDate || undefined}
+            onChange={(e) => setFromDate(e.target.value)}
+            className={dateInputCls}
+            title="Show tasks due on or after"
+          />
+          <span className="text-text-disabled">→</span>
+          <input
+            type="date"
+            value={toDate}
+            min={fromDate || undefined}
+            onChange={(e) => setToDate(e.target.value)}
+            className={dateInputCls}
+            title="Show tasks due on or before"
+          />
+          {(fromDate || toDate) && (
+            <button
+              onClick={() => { setFromDate(''); setToDate(''); }}
+              className="text-text-secondary hover:text-text-primary"
+              title="Clear date filter"
+            >
+              <X size={13} />
+            </button>
+          )}
+        </div>
+        <div className="ml-auto flex items-center gap-1.5">
           <SortButton />
           <FilterButton />
           <AssigneeButton />
@@ -317,6 +342,11 @@ export default function ListPage() {
 
       {tasks.length === 0 ? <EmptyState /> : (
         <div className="flex-1 overflow-y-auto p-5">
+          {rangeActive && rangedTasks.length === 0 && (
+            <p className="text-sm text-text-secondary bg-surface border border-border rounded-xl px-4 py-6 text-center mb-5">
+              No tasks are due between {fmtDay(fromDate)} and {fmtDay(toDate)}.
+            </p>
+          )}
           <DndContext
             sensors={sensors}
             collisionDetection={closestCorners}
@@ -337,19 +367,10 @@ export default function ListPage() {
                   canManage={canManage}
                   collapsed={collapsed.has(s.key)}
                   onToggle={() => toggleCollapsed(s.key)}
-                  isAdding={addingIn === s.key}
-                  newName={newName}
-                  setNewName={setNewName}
-                  onStartAdd={() => setAddingIn(s.key)}
-                  onCancelAdd={() => { setAddingIn(null); setNewName(''); setDupPrompt(null); }}
-                  onCreate={() => { void createInStatus(s.key); }}
+                  onStartAdd={() => openCreateForStatus(s.key)}
                   onOpenTask={setSelectedTaskId}
                   onStatusChange={(id, st) => workspace && updateTask(workspace.id, id, { status: st })}
-                  duplicateHint={
-                    addingIn === s.key && newName.trim()
-                      ? (findDuplicateTask(tasks, newName, null)?.name ?? null)
-                      : null
-                  }
+                  onOpenMenu={(id, x, y) => setMenu({ id, x, y })}
                 />
               ))}
             </div>
@@ -357,13 +378,14 @@ export default function ListPage() {
         </div>
       )}
 
-      {dupPrompt && (
-        <ConfirmDialog
-          title="This task already exists"
-          message={`A task named “${dupPrompt.info.name}” already exists in this group. Adding it again will create a duplicate.`}
-          confirmLabel="Add anyway"
-          onConfirm={() => { void createInStatus(dupPrompt.status, true); }}
-          onCancel={() => setDupPrompt(null)}
+      {menu && menuTask && (
+        <TaskContextMenu
+          task={menuTask}
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          onView={() => setSelectedTaskId(menuTask.id)}
+          onEdit={() => setSelectedTaskId(menuTask.id)}
         />
       )}
     </div>

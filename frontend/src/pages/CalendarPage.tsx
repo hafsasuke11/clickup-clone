@@ -15,7 +15,7 @@ const priorityDot: Record<TaskPriority, string> = {
 
 export default function CalendarPage() {
   const store = useTaskStore();
-  const { setSelectedTaskId, setCreateModalOpen, setCreateModalDueDate } = useUiStore();
+  const { setSelectedTaskId, setCreateModalOpen, setCreateModalDueDate, setCreateModalTaskOnly } = useUiStore();
   const canAddTask = useCan('manageTasks');
   const tasks = getVisibleTasks(store);
   const projectById = new Map(store.projects.map((p) => [p.id, p]));
@@ -119,8 +119,10 @@ export default function CalendarPage() {
                       <button
                         onClick={() => {
                           setCreateModalDueDate(cell.date!.toISOString().split('T')[0]);
+                          setCreateModalTaskOnly(true);
                           setCreateModalOpen(true);
                         }}
+                        title="Add task on this day"
                         className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-accent-purple text-white flex items-center justify-center opacity-0 group-hover/cell:opacity-100 transition-opacity">
                         <Plus size={11} />
                       </button>

@@ -7,12 +7,12 @@ import { useUiStore } from '@/store/uiStore';
 import { useCan } from '@/utils/permissions';
 import { initialsOf, colorFor } from '@/utils/avatarHelpers';
 
-// Listed alphabetically by label.
+// Dashboard is pinned first; the rest are listed alphabetically by label.
 const NAV_ITEMS = [
+  { to: '/app/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/app/activity', label: 'Activity', icon: Activity },
   { to: '/app/board', label: 'Board', icon: Kanban },
   { to: '/app/calendar', label: 'Calendar', icon: Calendar },
-  { to: '/app/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/app/list', label: 'List', icon: ListTodo },
   { to: '/app/projects', label: 'Projects', icon: FolderKanban },
   { to: '/app/users', label: 'Users', icon: Users },

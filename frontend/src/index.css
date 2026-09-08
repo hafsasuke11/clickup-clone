@@ -24,3 +24,34 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 .animate-slide-up { animation: slide-up 0.2s ease-out; }
+
+/*
+ * Board task highlight when arriving from the Activity feed: a bold, pulsing
+ * purple ring + glow + background wash that holds, then eases away over its
+ * final stretch. Total 5s — kept in sync with the setTimeout in KanbanPage.
+ */
+@keyframes task-flash {
+  0%   { box-shadow: 0 0 0 4px rgba(109, 79, 224, 0.70), 0 12px 34px -6px rgba(109, 79, 224, 0.55); background-color: rgba(109, 79, 224, 0.16); }
+  8%   { box-shadow: 0 0 0 4px rgba(109, 79, 224, 0.42), 0 8px 24px -8px rgba(109, 79, 224, 0.30); background-color: rgba(109, 79, 224, 0.10); }
+  16%  { box-shadow: 0 0 0 4px rgba(109, 79, 224, 0.72), 0 12px 34px -6px rgba(109, 79, 224, 0.55); background-color: rgba(109, 79, 224, 0.16); }
+  25%  { box-shadow: 0 0 0 4px rgba(109, 79, 224, 0.42), 0 8px 24px -8px rgba(109, 79, 224, 0.30); background-color: rgba(109, 79, 224, 0.10); }
+  34%  { box-shadow: 0 0 0 4px rgba(109, 79, 224, 0.72), 0 12px 34px -6px rgba(109, 79, 224, 0.55); background-color: rgba(109, 79, 224, 0.16); }
+  44%  { box-shadow: 0 0 0 4px rgba(109, 79, 224, 0.42), 0 8px 24px -8px rgba(109, 79, 224, 0.30); background-color: rgba(109, 79, 224, 0.10); }
+  54%  { box-shadow: 0 0 0 4px rgba(109, 79, 224, 0.68), 0 12px 32px -6px rgba(109, 79, 224, 0.50); background-color: rgba(109, 79, 224, 0.15); }
+  66%  { box-shadow: 0 0 0 4px rgba(109, 79, 224, 0.40), 0 8px 22px -8px rgba(109, 79, 224, 0.28); background-color: rgba(109, 79, 224, 0.10); }
+  78%  { box-shadow: 0 0 0 4px rgba(109, 79, 224, 0.55), 0 8px 22px -8px rgba(109, 79, 224, 0.32); background-color: rgba(109, 79, 224, 0.12); }
+  100% { box-shadow: 0 0 0 0 rgba(109, 79, 224, 0), 0 0 0 0 rgba(109, 79, 224, 0); background-color: rgba(109, 79, 224, 0); }
+}
+.animate-task-flash { animation: task-flash 5s ease-in-out; }
+
+/* An activity row collapsing out of the feed after it is deleted. */
+@keyframes activity-collapse {
+  0%   { opacity: 1; transform: translateX(0); max-height: 120px; }
+  40%  { opacity: 0; transform: translateX(14px); max-height: 120px; }
+  100% { opacity: 0; transform: translateX(14px); max-height: 0; padding-top: 0; padding-bottom: 0; margin: 0; border-width: 0; }
+}
+.activity-exit {
+  animation: activity-collapse 0.26s ease-in forwards;
+  overflow: hidden;
+  pointer-events: none;
+}

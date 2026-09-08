@@ -45,7 +45,7 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
 });
 
-app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/login', authLimiter); // also covers /api/auth/login/2fa
 app.use('/api/auth/signup', authLimiter);
 app.use('/api/auth', authRoutes);
 app.use('/api/workspaces', requireAuth, workspaceRoutes);

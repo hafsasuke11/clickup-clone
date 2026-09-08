@@ -3,6 +3,7 @@ import { Workspace } from '../models/Workspace.js';
 import { Task } from '../models/Task.js';
 import { Project } from '../models/Project.js';
 import { makeStatusKey, type WorkspaceStatus } from '../services/statusService.js';
+import { logActivity } from '../services/auditService.js';
 import {
   FALLBACK_PROJECT_STATUS,
   FALLBACK_TASK_STATUS,
@@ -57,14 +58,23 @@ router.post('/:kind', async (req: Request<{ workspaceId: string; kind: string }>
     return res.status(409).json({ error: 'A status with that name already exists.' });
   }
 
+  const key = makeStatusKey(trimmed, list as unknown as WorkspaceStatus[]);
   list.push({
-    key: makeStatusKey(trimmed, list as unknown as WorkspaceStatus[]),
+    key,
     label: trimmed,
     color: color || '#64748B',
     order: list.length,
     builtIn: false,
   });
   await ws.save();
+
+  logActivity({
+    workspaceId: req.params.workspaceId,
+    actorId: req.userId!,
+    action: 'status_created',
+    meta: { kind, key, label: trimmed },
+  });
+
   res.status(201).json({ statuses: [...list].sort((a, b) => a.order - b.order) });
 });
 
@@ -84,17 +94,34 @@ router.patch('/:kind/:key', async (req: Request<{ workspaceId: string; kind: str
   const status = list.find((s) => s.key === req.params.key);
   if (!status) return res.status(404).json({ error: 'Status not found' });
 
+  const changed: string[] = [];
   if (label !== undefined) {
     if (!label.trim()) return res.status(400).json({ error: 'Status name is required.' });
     const trimmed = label.trim();
     if (list.some((s) => s.key !== status.key && s.label.toLowerCase() === trimmed.toLowerCase())) {
       return res.status(409).json({ error: 'A status with that name already exists.' });
     }
+    if (status.label !== trimmed) changed.push('name');
     status.label = trimmed;
   }
-  if (color !== undefined) status.color = color;
+  if (color !== undefined && status.color !== color) {
+    changed.push('colour');
+    status.color = color;
+  } else if (color !== undefined) {
+    status.color = color;
+  }
 
   await ws.save();
+
+  if (changed.length) {
+    logActivity({
+      workspaceId: req.params.workspaceId,
+      actorId: req.userId!,
+      action: 'status_updated',
+      meta: { kind, key: status.key, label: status.label, fields: changed },
+    });
+  }
+
   res.json({ statuses: [...list].sort((a, b) => a.order - b.order) });
 });
 
@@ -130,9 +157,17 @@ router.delete('/:kind/:key', async (req: Request<{ workspaceId: string; kind: st
   if (status.builtIn) return res.status(400).json({ error: "Built-in statuses can't be deleted." });
 
   const fallback = FALLBACK[kind];
+  const removedLabel = status.label;
   ws[FIELD[kind]] = list.filter((s) => s.key !== req.params.key) as typeof list;
   ws[FIELD[kind]].forEach((s, i) => { s.order = i; });
   await ws.save();
+
+  logActivity({
+    workspaceId: req.params.workspaceId,
+    actorId: req.userId!,
+    action: 'status_deleted',
+    meta: { kind, key: req.params.key, label: removedLabel },
+  });
 
   // Move anything that used the deleted status onto the fallback.
   const filter = { workspaceId: req.params.workspaceId, status: req.params.key };

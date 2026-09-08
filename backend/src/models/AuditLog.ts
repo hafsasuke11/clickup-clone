@@ -12,7 +12,11 @@ export const AUDIT_ACTIONS = [
   'ownership_transferred',
   'permissions_changed',
   'project_created',
+  'project_updated',
   'project_deleted',
+  'status_created',
+  'status_updated',
+  'status_deleted',
 ] as const;
 
 const auditLogSchema = new Schema(

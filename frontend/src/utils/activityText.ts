@@ -1,6 +1,10 @@
-import type { ActivityEntry, TaskActivityAction, TaskActivityEntry } from './types';
+import type { AuditAction, TaskActivityEntry, User } from './types';
 
-export function describeActivity(entry: ActivityEntry): string {
+/** The subset of an audit entry needed to describe it — works for both
+ *  `ActivityEntry` and an `OverallActivityEntry` with `source: 'audit'`. */
+type AuditLike = { action: AuditAction | string; meta: Record<string, unknown>; target?: User | null };
+
+export function describeActivity(entry: AuditLike): string {
   const meta = entry.meta;
   const target = entry.target?.fullName ?? (meta.email as string | undefined) ?? 'someone';
 
@@ -31,20 +35,33 @@ export function describeActivity(entry: ActivityEntry): string {
     }
     case 'project_created':
       return `created project "${meta.name}"`;
+    case 'project_updated': {
+      const fields = (meta.fields as string[] | undefined) ?? [];
+      return fields.length
+        ? `edited project "${meta.name}" (${fields.join(', ')})`
+        : `edited project "${meta.name}"`;
+    }
     case 'project_deleted':
       return `deleted project "${meta.name}"`;
+    case 'status_created':
+      return `created the ${meta.kind ?? 'task'} status "${meta.label}"`;
+    case 'status_updated':
+      return `edited the ${meta.kind ?? 'task'} status "${meta.label}"`;
+    case 'status_deleted':
+      return `deleted the ${meta.kind ?? 'task'} status "${meta.label}"`;
     default:
       return entry.action;
   }
 }
 
-/** Which of the four summary buckets an action falls into. */
+/** Which of the four summary buckets an action falls into. Works for task
+ *  activity actions and audit-log actions alike. */
 export type ActivityBucket = 'added' | 'completed' | 'updated' | 'deleted';
 
-export function activityBucket(action: TaskActivityAction): ActivityBucket {
-  if (action === 'task_created') return 'added';
+export function activityBucket(action: string): ActivityBucket {
   if (action === 'task_completed') return 'completed';
-  if (action === 'task_deleted') return 'deleted';
+  if (/(_created|_added|_invited)$/.test(action)) return 'added';
+  if (/(_deleted|_removed|_left|_revoked)$/.test(action)) return 'deleted';
   return 'updated';
 }
 

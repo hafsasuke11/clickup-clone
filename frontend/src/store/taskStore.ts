@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { apiClient, ApiError } from '@/utils/api';
 import { useUiStore } from './uiStore';
-import type { Project, Task, TaskActivityEntry, TaskPriority, TaskStatus } from '@/utils/types';
+import type { OverallActivityEntry, Project, Task, TaskActivityEntry, TaskPriority, TaskStatus } from '@/utils/types';
 
 export type ProjectInput = Partial<Omit<Project, 'id' | 'workspaceId' | 'createdBy' | 'createdAt'>> & {
   name: string;
@@ -71,15 +71,29 @@ interface TaskStore {
   projects: Project[];
   taskActivity: TaskActivityEntry[];
   taskActivityLoaded: boolean;
+  /** App-wide activity timeline (task activity + audit log) for the Activity page. */
+  overallActivity: OverallActivityEntry[];
+  overallActivityLoaded: boolean;
   loading: boolean;
   initialized: boolean;
 
   fetchTasks: (workspaceId: string) => Promise<void>;
   fetchProjects: (workspaceId: string) => Promise<void>;
   fetchTaskActivity: (workspaceId: string) => Promise<void>;
+  fetchOverallActivity: (workspaceId: string) => Promise<void>;
+  /** Delete rows from the app-wide activity timeline. Each entry is routed to
+   *  the right log by its `source`. Resolves to the `source:id` keys removed. */
+  deleteOverallActivityEntries: (
+    workspaceId: string,
+    entries: { id: string; source: 'task' | 'audit' }[],
+  ) => Promise<string[]>;
   /** Delete activity entries — for one project, or all of them when `projectId`
    *  is omitted. */
   clearTaskActivity: (workspaceId: string, projectId?: string) => Promise<void>;
+  /** Remove specific activity-feed rows by id. Only the activity records are
+   *  deleted — the tasks/projects that produced them are untouched. Resolves to
+   *  the ids that were actually removed. */
+  deleteTaskActivityEntries: (workspaceId: string, ids: string[]) => Promise<string[]>;
 
   /** Creates a task, unless an identically-named task already exists in the same
    *  project — then it resolves to `{ duplicate }` and creates nothing. Pass
@@ -119,6 +133,8 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
   projects: [],
   taskActivity: [],
   taskActivityLoaded: false,
+  overallActivity: [],
+  overallActivityLoaded: false,
   loading: false,
   initialized: false,
 
@@ -150,6 +166,68 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
     }
   },
 
+  fetchOverallActivity: async (workspaceId) => {
+    try {
+      const { activity } = await apiClient.get<{ activity: OverallActivityEntry[] }>(
+        `/api/workspaces/${workspaceId}/overall-activity`,
+      );
+      set({ overallActivity: activity, overallActivityLoaded: true });
+    } catch (err) {
+      console.error('fetchOverallActivity error:', err);
+      set({ overallActivityLoaded: true });
+    }
+  },
+
+  deleteOverallActivityEntries: async (workspaceId, entries) => {
+    if (entries.length === 0) return [];
+    const keyOf = (e: { id: string; source: string }) => `${e.source}:${e.id}`;
+    const keySet = new Set(entries.map(keyOf));
+    const prev = get().overallActivity;
+    // Optimistic: drop them from the feed straight away.
+    set((s) => ({ overallActivity: s.overallActivity.filter((e) => !keySet.has(keyOf(e))) }));
+
+    const taskIds = entries.filter((e) => e.source === 'task').map((e) => e.id);
+    const auditIds = entries.filter((e) => e.source === 'audit').map((e) => e.id);
+    const empty = Promise.resolve({ deleted: 0, ids: [] as string[] });
+    try {
+      const [taskRes, auditRes] = await Promise.all([
+        taskIds.length
+          ? apiClient.del<{ deleted: number; ids: string[] }>(
+              `/api/workspaces/${workspaceId}/task-activity/entries`, { ids: taskIds },
+            )
+          : empty,
+        auditIds.length
+          ? apiClient.del<{ deleted: number; ids: string[] }>(
+              `/api/workspaces/${workspaceId}/activity/entries`, { ids: auditIds },
+            )
+          : empty,
+      ]);
+      const removed = new Set([
+        ...taskRes.ids.map((id) => `task:${id}`),
+        ...auditRes.ids.map((id) => `audit:${id}`),
+      ]);
+      // Restore any the server refused (not yours to delete).
+      const missed = prev.filter((e) => keySet.has(keyOf(e)) && !removed.has(keyOf(e)));
+      if (missed.length > 0) {
+        set((s) => ({
+          overallActivity: [...s.overallActivity, ...missed].sort(
+            (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+          ),
+        }));
+        useUiStore.getState().addToast(
+          `${missed.length} activit${missed.length === 1 ? 'y' : 'ies'} couldn't be removed`,
+          'error',
+        );
+      }
+      return [...removed];
+    } catch (err) {
+      set({ overallActivity: prev });
+      useUiStore.getState().addToast('Failed to delete activity', 'error');
+      console.error('deleteOverallActivityEntries error:', err);
+      return [];
+    }
+  },
+
   clearTaskActivity: async (workspaceId, projectId) => {
     const prev = get().taskActivity;
     set((s) => ({
@@ -162,6 +240,38 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
       set({ taskActivity: prev });
       useUiStore.getState().addToast('Failed to clear activity', 'error');
       console.error('clearTaskActivity error:', err);
+    }
+  },
+
+  deleteTaskActivityEntries: async (workspaceId, ids) => {
+    if (ids.length === 0) return [];
+    const prev = get().taskActivity;
+    const idSet = new Set(ids);
+    // Optimistic: drop them from the feed straight away.
+    set((s) => ({ taskActivity: s.taskActivity.filter((e) => !idSet.has(e.id)) }));
+    try {
+      const { ids: deleted } = await apiClient.del<{ deleted: number; ids: string[] }>(
+        `/api/workspaces/${workspaceId}/task-activity/entries`,
+        { ids },
+      );
+      // Restore any the server didn't actually remove (e.g. not yours to delete).
+      const kept = new Set(deleted);
+      const missed = prev.filter((e) => idSet.has(e.id) && !kept.has(e.id));
+      if (missed.length > 0) {
+        set((s) => ({
+          taskActivity: [...s.taskActivity, ...missed].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+        }));
+        useUiStore.getState().addToast(
+          `${missed.length} activit${missed.length === 1 ? 'y' : 'ies'} couldn't be removed`,
+          'error',
+        );
+      }
+      return deleted;
+    } catch (err) {
+      set({ taskActivity: prev });
+      useUiStore.getState().addToast('Failed to delete activity', 'error');
+      console.error('deleteTaskActivityEntries error:', err);
+      return [];
     }
   },
 
@@ -320,6 +430,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
 
   reset: () => set({
     tasks: [], projects: [], taskActivity: [], taskActivityLoaded: false,
+    overallActivity: [], overallActivityLoaded: false,
     loading: false, initialized: false,
   }),
 }));

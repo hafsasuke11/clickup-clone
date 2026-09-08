@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, CheckSquare, Folder, AlertTriangle, Lock } from 'lucide-react';
+import { X, CheckSquare, Folder, AlertTriangle, Lock, CheckCircle2 } from 'lucide-react';
 import { useTaskStore, findDuplicateTask, type DuplicateTaskInfo } from '@/store/taskStore';
 import { useWorkspaceStore, useTaskStatuses } from '@/store/workspaceStore';
 import { useUiStore } from '@/store/uiStore';
@@ -12,28 +12,41 @@ type Tab = 'task' | 'project';
 const COLORS = ['#6D4FE0', '#2E90FA', '#F79009', '#EE46BC', '#12B76A', '#F04438'];
 
 export default function CreateModal() {
-  const { workspace } = useWorkspaceStore();
+  const { workspace, members } = useWorkspaceStore();
   const taskStatuses = useTaskStatuses();
   const { createTask, createProject, projects, tasks } = useTaskStore();
-  const { createModalDueDate, setCreateModalDueDate, setCreateModalOpen, addToast } = useUiStore();
+  const {
+    createModalDueDate, setCreateModalDueDate, createModalStatus, setCreateModalStatus,
+    setCreateModalOpen, setCreateModalTaskOnly, addToast,
+  } = useUiStore();
+  const taskOnly = useUiStore((s) => s.createModalTaskOnly);
   const canTasks = useCan('manageTasks');
-  const canProjects = useCan('manageProjects');
+  const canProjects = useCan('manageProjects') && !taskOnly;
   const canAssign = useCan('assignTasks');
-  const [activeTab, setActiveTab] = useState<Tab>(canTasks ? 'task' : canProjects ? 'project' : 'task');
+  const [activeTab, setActiveTab] = useState<Tab>(canTasks || taskOnly ? 'task' : canProjects ? 'project' : 'task');
   const [dupPrompt, setDupPrompt] = useState<DuplicateTaskInfo | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Name of a project just created in this session — shows the success banner and
+  // keeps the flow on the Task step with that project pre-selected.
+  const [createdProjectName, setCreatedProjectName] = useState<string | null>(null);
 
   const [taskName, setTaskName] = useState('');
   const [taskProject, setTaskProject] = useState('');
+  const [taskAssignee, setTaskAssignee] = useState('');
   const [taskPriority, setTaskPriority] = useState<TaskPriority>('normal');
-  const [taskStatus, setTaskStatus] = useState<TaskStatus>('pending');
+  const [taskStatus, setTaskStatus] = useState<TaskStatus>(createModalStatus ?? 'pending');
   const [taskDue, setTaskDue] = useState(createModalDueDate ?? '');
   const [taskDesc, setTaskDesc] = useState('');
 
   const [projName, setProjName] = useState('');
   const [projColor, setProjColor] = useState(COLORS[0]);
 
-  const close = () => { setCreateModalOpen(false); setCreateModalDueDate(null); };
+  const close = () => {
+    setCreateModalOpen(false);
+    setCreateModalDueDate(null);
+    setCreateModalStatus(null);
+    setCreateModalTaskOnly(false);
+  };
 
   // A same-named task already loaded for this project — an instant, non-blocking hint.
   const localDuplicate =
@@ -48,6 +61,7 @@ export default function CreateModal() {
       const res = await createTask(workspace.id, {
         name: taskName.trim(),
         projectId: taskProject || null,
+        assigneeId: canAssign ? (taskAssignee || null) : null,
         priority: taskPriority,
         status: taskStatus,
         dueDate: taskDue || null,
@@ -71,9 +85,20 @@ export default function CreateModal() {
       await createTheTask(false);
     } else if (activeTab === 'project') {
       if (!projName.trim()) return;
-      const p = await createProject(workspace.id, { name: projName.trim(), color: projColor });
-      if (p) addToast(`Project "${projName.trim()}" created`, 'success');
-      close();
+      setSubmitting(true);
+      try {
+        const p = await createProject(workspace.id, { name: projName.trim(), color: projColor });
+        if (!p) return; // createProject already surfaced the error — stay on the Project step
+        addToast('Project created successfully', 'success');
+        // Move on to the Task step with the new project saved and pre-selected.
+        // A project is NOT a task — nothing is created here yet.
+        setCreatedProjectName(p.name);
+        setTaskProject(p.id);
+        setProjName('');
+        setActiveTab('task');
+      } finally {
+        setSubmitting(false);
+      }
     }
   };
 
@@ -121,6 +146,15 @@ export default function CreateModal() {
         <div className="px-5 py-5 space-y-4">
           {activeTab === 'task' && (
             <>
+              {createdProjectName && (
+                <div className="flex items-start gap-2 rounded-lg border border-accent-green/30 bg-accent-green/10 px-3 py-2.5">
+                  <CheckCircle2 size={15} className="text-accent-green shrink-0 mt-0.5" />
+                  <p className="text-xs text-text-primary">
+                    <span className="font-medium">Project created successfully.</span>{' '}
+                    Now add a task for <span className="font-medium">“{createdProjectName}”</span> — it's already selected below.
+                  </p>
+                </div>
+              )}
               <div>
                 <input value={taskName} onChange={(e) => setTaskName(e.target.value)} placeholder="Task name *" autoFocus
                   className={`w-full bg-background border rounded-lg px-3 py-2.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none transition-colors ${
@@ -165,6 +199,18 @@ export default function CreateModal() {
                     className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-accent-purple transition-colors" />
                 </div>
               </div>
+              {canAssign && (
+                <div>
+                  <label className="block text-xs text-text-secondary mb-1">Assign to</label>
+                  <select value={taskAssignee} onChange={(e) => setTaskAssignee(e.target.value)}
+                    className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-accent-purple transition-colors">
+                    <option value="">Unassigned</option>
+                    {members.map((m) => (
+                      <option key={m.userId} value={m.userId}>{m.user?.fullName ?? 'Unknown'}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <textarea value={taskDesc} onChange={(e) => setTaskDesc(e.target.value)} placeholder="Description (optional)" rows={3}
                 className="w-full bg-background border border-border rounded-lg px-3 py-2.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-accent-purple transition-colors resize-none" />
             </>

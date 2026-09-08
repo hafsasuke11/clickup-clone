@@ -67,6 +67,39 @@ export async function sendInviteEmail(opts: {
   );
 }
 
+/** The 6-digit two-factor code. `purpose` only tweaks the wording. */
+export async function sendOtpEmail(opts: {
+  to: string;
+  code: string;
+  purpose: 'enable' | 'disable' | 'login';
+}): Promise<void> {
+  const heading =
+    opts.purpose === 'login' ? 'Your sign-in code'
+    : opts.purpose === 'enable' ? 'Confirm two-factor authentication'
+    : 'Confirm turning off two-factor authentication';
+  const line =
+    opts.purpose === 'login' ? 'Use this code to finish signing in to ClickUp Clone.'
+    : opts.purpose === 'enable' ? 'Enter this code to turn on two-factor authentication.'
+    : 'Enter this code to turn off two-factor authentication.';
+
+  await sendEmail(
+    opts.to,
+    `${heading} — ${opts.code}`,
+    `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+        <h2 style="color: #101828;">${heading}</h2>
+        <p style="color: #667085; font-size: 15px; line-height: 1.5;">${line}</p>
+        <p style="font-size: 34px; font-weight: 700; letter-spacing: 8px; color: #101828; margin: 24px 0;">
+          ${opts.code}
+        </p>
+        <p style="color: #98A2B3; font-size: 12px;">
+          This code expires in 5 minutes and can only be used once. If you didn't request it, you can ignore this email.
+        </p>
+      </div>
+    `,
+  );
+}
+
 export async function sendAddedToWorkspaceEmail(opts: {
   to: string;
   workspaceName: string;

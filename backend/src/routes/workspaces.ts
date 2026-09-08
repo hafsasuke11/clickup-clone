@@ -203,6 +203,25 @@ router.delete('/:workspaceId/activity', requireWorkspaceMember, requireOwner('cl
   res.status(204).end();
 });
 
+// Remove specific audit-log rows by id (used by the Activity page's row menu).
+// A member may remove rows they are the actor of; the owner or someone with
+// `manageMembers` may remove anyone's. Deletes only the log rows.
+router.delete('/:workspaceId/activity/entries', requireWorkspaceMember, async (req, res) => {
+  const raw = (req.body as { ids?: unknown })?.ids;
+  const ids = Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : [];
+  if (ids.length === 0) return res.json({ deleted: 0, ids: [] });
+
+  const canManageAny = req.workspaceRole === 'owner' || Boolean(req.workspacePermissions?.manageMembers);
+  const filter: Record<string, unknown> = { workspaceId: req.params.workspaceId, _id: { $in: ids } };
+  if (!canManageAny) filter.actorId = req.userId;
+
+  const matched = await AuditLog.find(filter).select('_id');
+  const matchedIds = matched.map((d) => String(d._id));
+  if (matchedIds.length > 0) await AuditLog.deleteMany({ _id: { $in: matchedIds } });
+
+  res.json({ deleted: matchedIds.length, ids: matchedIds });
+});
+
 // Per-member task activity — what each member added / updated / completed /
 // changed. Visible to every workspace member (unlike the members-only audit log
 // above), optionally scoped to one project or one member.
@@ -231,6 +250,78 @@ router.get('/:workspaceId/task-activity', requireWorkspaceMember, async (req, re
   }));
 
   res.json({ activity });
+});
+
+// The whole-workspace activity timeline: task activity + the audit log (project,
+// status, member, permission and workspace changes), merged and newest-first.
+// Visible to every member — this is the app-wide "what happened" feed.
+router.get('/:workspaceId/overall-activity', requireWorkspaceMember, async (req, res) => {
+  const { workspaceId } = req.params;
+  const limit = Math.min(Number(req.query.limit) || 400, 1000);
+
+  const [auditEntries, taskEntries] = await Promise.all([
+    AuditLog.find({ workspaceId }).sort({ createdAt: -1 }).limit(limit),
+    TaskActivity.find({ workspaceId }).sort({ createdAt: -1 }).limit(limit),
+  ]);
+
+  const userIds = new Set<string>();
+  auditEntries.forEach((e) => {
+    userIds.add(String(e.actorId));
+    if (e.targetUserId) userIds.add(String(e.targetUserId));
+  });
+  taskEntries.forEach((e) => userIds.add(String(e.actorId)));
+
+  const users = await User.find({ _id: { $in: [...userIds] } });
+  const usersById = new Map(users.map((u) => [String(u._id), toPublicUser(u)]));
+
+  const audit = auditEntries.map((e) => ({
+    id: String(e._id),
+    source: 'audit' as const,
+    action: e.action,
+    actor: usersById.get(String(e.actorId)) ?? null,
+    target: e.targetUserId ? (usersById.get(String(e.targetUserId)) ?? null) : null,
+    meta: e.meta ?? {},
+    createdAt: e.createdAt,
+  }));
+
+  const task = taskEntries.map((e) => ({
+    id: String(e._id),
+    source: 'task' as const,
+    action: e.action,
+    actor: usersById.get(String(e.actorId)) ?? null,
+    taskId: e.taskId ? String(e.taskId) : null,
+    taskName: e.taskName,
+    projectId: e.projectId ? String(e.projectId) : null,
+    meta: e.meta ?? {},
+    createdAt: e.createdAt,
+  }));
+
+  const activity = [...audit, ...task]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, limit);
+
+  res.json({ activity });
+});
+
+// Remove specific activity-feed rows by id. This deletes only the activity
+// records — never the tasks or projects that produced them. A member may remove
+// their own rows; `manageProjects` lets them remove anyone's.
+router.delete('/:workspaceId/task-activity/entries', requireWorkspaceMember, async (req, res) => {
+  const raw = (req.body as { ids?: unknown })?.ids;
+  const ids = Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : [];
+  if (ids.length === 0) return res.json({ deleted: 0, ids: [] });
+
+  const filter: Record<string, unknown> = {
+    workspaceId: req.params.workspaceId,
+    _id: { $in: ids },
+  };
+  if (!req.workspacePermissions?.manageProjects) filter.actorId = req.userId;
+
+  const matched = await TaskActivity.find(filter).select('_id');
+  const matchedIds = matched.map((d) => String(d._id));
+  if (matchedIds.length > 0) await TaskActivity.deleteMany({ _id: { $in: matchedIds } });
+
+  res.json({ deleted: matchedIds.length, ids: matchedIds });
 });
 
 // Clear task activity — for one project (`?projectId=`), the "no project"
