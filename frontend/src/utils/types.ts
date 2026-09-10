@@ -107,7 +107,17 @@ export type TaskActivityAction =
   | 'task_due_changed'
   | 'task_moved'
   | 'task_description_changed'
-  | 'task_deleted';
+  | 'task_deleted'
+  | 'task_comment_added'
+  | 'task_attachment_added'
+  | 'task_attachment_removed'
+  | 'task_follower_added'
+  | 'task_follower_removed'
+  | 'task_visibility_changed'
+  | 'task_subtask_added'
+  | 'task_subtask_completed'
+  | 'task_subtask_reopened'
+  | 'task_subtask_removed';
 
 export interface TaskActivityEntry {
   id: string;
@@ -163,6 +173,18 @@ export interface Project {
 /** A workspace-defined status key (e.g. 'pending', 'in_progress', 'completed', or a custom one). */
 export type TaskStatus = string;
 export type TaskPriority = 'urgent' | 'high' | 'normal' | 'low';
+export type TaskVisibility = 'private' | 'public';
+
+export interface Subtask {
+  id: string;
+  title: string;
+  done: boolean;
+  order: number;
+  createdBy?: string;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface Task {
   id: string;
@@ -176,6 +198,42 @@ export interface Task {
   dueDate: string | null;
   assigneeId: string | null;
   createdBy: string;
+  /** Member ids following this task's activity. Always present (defaults to []). */
+  followers: string[];
+  /** 'private' = creator/assignee/followers only (advisory flag, not enforced on
+   *  the list); 'public' = whole workspace. Defaults to 'private'. */
+  visibility: TaskVisibility;
+  /** Checklist items. Progress is derived from these. Always present ([]). */
+  subtasks: Subtask[];
   createdAt: string;
   updatedAt: string;
+}
+
+/** done / total / percent for a task's checklist, or null when it has none. */
+export function taskProgress(task: Pick<Task, 'subtasks'>): { done: number; total: number; pct: number } | null {
+  const total = task.subtasks?.length ?? 0;
+  if (total === 0) return null;
+  const done = task.subtasks.filter((s) => s.done).length;
+  return { done, total, pct: Math.round((done / total) * 100) };
+}
+
+export interface TaskComment {
+  id: string;
+  taskId: string;
+  authorId: string;
+  body: string;
+  createdAt: string;
+  author: User | null;
+}
+
+export interface TaskAttachment {
+  id: string;
+  taskId: string;
+  name: string;
+  mimeType: string;
+  /** Original file size in bytes. */
+  size: number;
+  uploadedBy: string;
+  createdAt: string;
+  uploader: User | null;
 }

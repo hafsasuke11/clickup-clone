@@ -11,6 +11,7 @@ import { useSession } from '@/utils/authGuards';
 import { useAuthStore } from '@/store/authStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 import { useTaskStore } from '@/store/taskStore';
+import { useTaskThreadStore } from '@/store/taskThreadStore';
 import { useUiStore } from '@/store/uiStore';
 
 export default function AppShell() {
@@ -18,6 +19,7 @@ export default function AppShell() {
   const cancelAddAccount = useAuthStore((s) => s.cancelAddAccount);
   const { workspace, initialized: wsInitialized, fetchWorkspaces, reset: resetWorkspace } = useWorkspaceStore();
   const { initialized: tasksInitialized, fetchTasks, fetchProjects, reset: resetTasks } = useTaskStore();
+  const resetTaskThreads = useTaskThreadStore((s) => s.reset);
   const { searchOpen, setSearchOpen, selectedTaskId, createModalOpen, inviteModalOpen } = useUiStore();
 
   // Reaching the app clears any pending "add another account" intent.
@@ -32,6 +34,7 @@ export default function AppShell() {
     loadedForUserId.current = user.id;
     resetWorkspace();
     resetTasks();
+    resetTaskThreads();
     void fetchWorkspaces(user.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
@@ -39,6 +42,7 @@ export default function AppShell() {
   // Re-fetch tasks/projects whenever the active workspace changes (including switching workspaces).
   useEffect(() => {
     if (!workspace) return;
+    resetTaskThreads();
     void fetchTasks(workspace.id);
     void fetchProjects(workspace.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps

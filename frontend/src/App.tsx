@@ -5,6 +5,7 @@ import InviteAcceptPage from '@/pages/InviteAcceptPage';
 import AppShell from '@/components/AppShell';
 import DashboardPage from '@/pages/DashboardPage';
 import ListPage from '@/pages/ListPage';
+import TasksPage from '@/pages/TasksPage';
 import KanbanPage from '@/pages/KanbanPage';
 import ProjectsPage from '@/pages/ProjectsPage';
 import CalendarPage from '@/pages/CalendarPage';
@@ -25,6 +26,7 @@ function App() {
         <Route path="/app" element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
           <Route index element={<Navigate to="board" replace />} />
           <Route path="dashboard" element={<DashboardPage />} />
+          <Route path="tasks" element={<TasksPage />} />
           <Route path="list" element={<ListPage />} />
           <Route path="board" element={<KanbanPage />} />
           <Route path="projects" element={<ProjectsPage />} />

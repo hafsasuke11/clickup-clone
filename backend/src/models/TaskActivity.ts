@@ -19,6 +19,16 @@ export const TASK_ACTIVITY_ACTIONS = [
   'task_moved',
   'task_description_changed',
   'task_deleted',
+  'task_comment_added',
+  'task_attachment_added',
+  'task_attachment_removed',
+  'task_follower_added',
+  'task_follower_removed',
+  'task_visibility_changed',
+  'task_subtask_added',
+  'task_subtask_completed',
+  'task_subtask_reopened',
+  'task_subtask_removed',
 ] as const;
 
 const taskActivitySchema = new Schema(

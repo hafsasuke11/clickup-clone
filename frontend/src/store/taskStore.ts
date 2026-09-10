@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { apiClient, ApiError } from '@/utils/api';
 import { useUiStore } from './uiStore';
-import type { OverallActivityEntry, Project, Task, TaskActivityEntry, TaskPriority, TaskStatus } from '@/utils/types';
+import type { OverallActivityEntry, Project, Task, TaskActivityEntry, TaskPriority, TaskStatus, TaskVisibility } from '@/utils/types';
 
 export type ProjectInput = Partial<Omit<Project, 'id' | 'workspaceId' | 'createdBy' | 'createdAt'>> & {
   name: string;
@@ -104,6 +104,18 @@ interface TaskStore {
   }, opts?: { force?: boolean }) => Promise<CreateTaskResult>;
   updateTask: (workspaceId: string, taskId: string, patch: Partial<Task>) => Promise<void>;
   deleteTask: (workspaceId: string, taskId: string) => Promise<void>;
+  /** Flip a task between 'private' and 'public'. Goes through its own endpoint,
+   *  not the generic task PATCH. */
+  setTaskVisibility: (workspaceId: string, taskId: string, visibility: TaskVisibility) => Promise<void>;
+  /** Add or remove a follower on a task. `follow` decides the direction. */
+  setTaskFollower: (workspaceId: string, taskId: string, userId: string, follow: boolean) => Promise<void>;
+  /** Checklist operations. Each resolves once the task (with its updated
+   *  `subtasks`) is back from the server. */
+  addSubtask: (workspaceId: string, taskId: string, title: string) => Promise<void>;
+  updateSubtask: (
+    workspaceId: string, taskId: string, subtaskId: string, patch: { title?: string; done?: boolean },
+  ) => Promise<void>;
+  deleteSubtask: (workspaceId: string, taskId: string, subtaskId: string) => Promise<void>;
   /** Persist a manual card order for one status column (Board / List drag-and-drop).
    *  `orderedIds` is the full ordered id list for `status`; every task in it is
    *  moved onto `status`, covering a card dragged in from another column. */
@@ -310,6 +322,106 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
       if (prev) set((s) => ({ tasks: s.tasks.map((t) => (t.id === taskId ? prev : t)) }));
       useUiStore.getState().addToast(apiErrorMessage(err, 'Failed to update task'), 'error');
       console.error('updateTask error:', err);
+    }
+  },
+
+  setTaskVisibility: async (workspaceId, taskId, visibility) => {
+    const prev = get().tasks.find((t) => t.id === taskId);
+    set((s) => ({ tasks: s.tasks.map((t) => (t.id === taskId ? { ...t, visibility } : t)) }));
+    try {
+      const { task } = await apiClient.patch<{ task: Task }>(
+        `/api/workspaces/${workspaceId}/tasks/${taskId}/visibility`,
+        { visibility },
+      );
+      set((s) => ({ tasks: s.tasks.map((t) => (t.id === taskId ? task : t)) }));
+      if (get().taskActivityLoaded) void get().fetchTaskActivity(workspaceId);
+    } catch (err) {
+      if (prev) set((s) => ({ tasks: s.tasks.map((t) => (t.id === taskId ? prev : t)) }));
+      useUiStore.getState().addToast(apiErrorMessage(err, 'Failed to change visibility'), 'error');
+      console.error('setTaskVisibility error:', err);
+    }
+  },
+
+  setTaskFollower: async (workspaceId, taskId, userId, follow) => {
+    const prev = get().tasks.find((t) => t.id === taskId);
+    set((s) => ({
+      tasks: s.tasks.map((t) => {
+        if (t.id !== taskId) return t;
+        const followers = new Set(t.followers ?? []);
+        if (follow) followers.add(userId); else followers.delete(userId);
+        return { ...t, followers: [...followers] };
+      }),
+    }));
+    try {
+      const { task } = follow
+        ? await apiClient.post<{ task: Task }>(`/api/workspaces/${workspaceId}/tasks/${taskId}/followers`, { userId })
+        : await apiClient.del<{ task: Task }>(`/api/workspaces/${workspaceId}/tasks/${taskId}/followers/${userId}`);
+      set((s) => ({ tasks: s.tasks.map((t) => (t.id === taskId ? task : t)) }));
+      if (get().taskActivityLoaded) void get().fetchTaskActivity(workspaceId);
+    } catch (err) {
+      if (prev) set((s) => ({ tasks: s.tasks.map((t) => (t.id === taskId ? prev : t)) }));
+      useUiStore.getState().addToast(apiErrorMessage(err, 'Failed to update followers'), 'error');
+      console.error('setTaskFollower error:', err);
+    }
+  },
+
+  addSubtask: async (workspaceId, taskId, title) => {
+    const text = title.trim();
+    if (!text) return;
+    try {
+      const { task } = await apiClient.post<{ task: Task }>(
+        `/api/workspaces/${workspaceId}/tasks/${taskId}/subtasks`,
+        { title: text },
+      );
+      set((s) => ({ tasks: s.tasks.map((t) => (t.id === taskId ? task : t)) }));
+      if (get().taskActivityLoaded) void get().fetchTaskActivity(workspaceId);
+    } catch (err) {
+      useUiStore.getState().addToast(apiErrorMessage(err, 'Failed to add subtask'), 'error');
+      console.error('addSubtask error:', err);
+    }
+  },
+
+  updateSubtask: async (workspaceId, taskId, subtaskId, patch) => {
+    const prev = get().tasks.find((t) => t.id === taskId);
+    // Optimistic: reflect the checkbox / rename immediately.
+    set((s) => ({
+      tasks: s.tasks.map((t) =>
+        t.id === taskId
+          ? { ...t, subtasks: t.subtasks.map((st) => (st.id === subtaskId ? { ...st, ...patch } : st)) }
+          : t,
+      ),
+    }));
+    try {
+      const { task } = await apiClient.patch<{ task: Task }>(
+        `/api/workspaces/${workspaceId}/tasks/${taskId}/subtasks/${subtaskId}`,
+        patch,
+      );
+      set((s) => ({ tasks: s.tasks.map((t) => (t.id === taskId ? task : t)) }));
+      if (get().taskActivityLoaded) void get().fetchTaskActivity(workspaceId);
+    } catch (err) {
+      if (prev) set((s) => ({ tasks: s.tasks.map((t) => (t.id === taskId ? prev : t)) }));
+      useUiStore.getState().addToast(apiErrorMessage(err, 'Failed to update subtask'), 'error');
+      console.error('updateSubtask error:', err);
+    }
+  },
+
+  deleteSubtask: async (workspaceId, taskId, subtaskId) => {
+    const prev = get().tasks.find((t) => t.id === taskId);
+    set((s) => ({
+      tasks: s.tasks.map((t) =>
+        t.id === taskId ? { ...t, subtasks: t.subtasks.filter((st) => st.id !== subtaskId) } : t,
+      ),
+    }));
+    try {
+      const { task } = await apiClient.del<{ task: Task }>(
+        `/api/workspaces/${workspaceId}/tasks/${taskId}/subtasks/${subtaskId}`,
+      );
+      set((s) => ({ tasks: s.tasks.map((t) => (t.id === taskId ? task : t)) }));
+      if (get().taskActivityLoaded) void get().fetchTaskActivity(workspaceId);
+    } catch (err) {
+      if (prev) set((s) => ({ tasks: s.tasks.map((t) => (t.id === taskId ? prev : t)) }));
+      useUiStore.getState().addToast(apiErrorMessage(err, 'Failed to delete subtask'), 'error');
+      console.error('deleteSubtask error:', err);
     }
   },
 

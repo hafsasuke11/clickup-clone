@@ -28,7 +28,15 @@ const PORT = process.env.PORT ?? 3001;
 app.set('trust proxy', 1); // behind a load balancer / reverse proxy in production
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors({ origin: CORS_ORIGINS, credentials: true }));
-app.use(express.json({ limit: '100kb' }));
+
+// Every endpoint takes a small JSON body, except the task attachment upload,
+// which carries a base64 file (capped at 5 MB → ~6.7 MB encoded). Route that one
+// path through a larger parser and keep the tight 100 kb limit everywhere else.
+const jsonSmall = express.json({ limit: '100kb' });
+const jsonLarge = express.json({ limit: '10mb' });
+const isAttachmentUpload = (req: Request) =>
+  req.method === 'POST' && /\/tasks\/[^/]+\/attachments\/?$/.test(req.path);
+app.use((req, res, next) => (isAttachmentUpload(req) ? jsonLarge : jsonSmall)(req, res, next));
 
 // Throttle credential endpoints. Only failed attempts count toward the limit,
 // so ordinary users are never blocked but brute-force / stuffing is stopped.

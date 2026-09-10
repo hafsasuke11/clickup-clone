@@ -114,6 +114,26 @@ export function describeTaskActivity(
       return 'edited the description';
     case 'task_deleted':
       return 'deleted this task';
+    case 'task_comment_added':
+      return 'commented on this task';
+    case 'task_attachment_added':
+      return m.name ? `attached "${m.name}"` : 'attached a file';
+    case 'task_attachment_removed':
+      return m.name ? `removed the attachment "${m.name}"` : 'removed an attachment';
+    case 'task_follower_added':
+      return m.self ? 'started following this task' : 'added a follower';
+    case 'task_follower_removed':
+      return m.self ? 'stopped following this task' : 'removed a follower';
+    case 'task_visibility_changed':
+      return `made this task ${m.to ?? 'private'}`;
+    case 'task_subtask_added':
+      return m.title ? `added subtask "${m.title}"` : 'added a subtask';
+    case 'task_subtask_completed':
+      return m.title ? `completed subtask "${m.title}"` : 'completed a subtask';
+    case 'task_subtask_reopened':
+      return m.title ? `reopened subtask "${m.title}"` : 'reopened a subtask';
+    case 'task_subtask_removed':
+      return m.title ? `removed subtask "${m.title}"` : 'removed a subtask';
     default:
       return entry.action;
   }
