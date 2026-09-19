@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, Trash2, Lock, Calendar, User as UserIcon, FolderKanban, AlignLeft,
-  Paperclip, Download, X, Send, UserPlus, History, ListChecks, Circle, CheckCircle2, Plus,
+  Paperclip, Download, X, Send, History, ListChecks, Circle, CheckCircle2, Plus,
 } from 'lucide-react';
 import { useTaskStore } from '@/store/taskStore';
 import { useTaskThreadStore } from '@/store/taskThreadStore';
@@ -52,7 +52,7 @@ function Avatar({ id, name, size = 24 }: { id: string; name: string; size?: numb
 
 export default function TaskDetailInline({ taskId, onBack }: { taskId: string; onBack?: () => void }) {
   const {
-    tasks, projects, updateTask, deleteTask, setTaskFollower,
+    tasks, projects, updateTask, deleteTask,
     addSubtask, updateSubtask, deleteSubtask,
   } = useTaskStore();
   const taskActivity = useTaskStore((s) => s.taskActivity);
@@ -126,11 +126,8 @@ export default function TaskDetailInline({ taskId, onBack }: { taskId: string; o
   const save = (patch: Record<string, unknown>) => updateTask(workspace.id, task.id, patch);
   const dueValue = task.dueDate ? new Date(task.dueDate).toISOString().split('T')[0] : '';
   const assignee = members.find((m) => m.userId === task.assigneeId);
-  const followers = task.followers ?? [];
-  const iFollow = user ? followers.includes(user.id) : false;
   const comments = thread?.comments ?? [];
   const attachments = thread?.attachments ?? [];
-  const notFollowing = members.filter((m) => !followers.includes(m.userId));
   const subtasks = [...(task.subtasks ?? [])].sort((a, b) => a.order - b.order || a.createdAt.localeCompare(b.createdAt));
   const progress = taskProgress(task);
   const lastActivity = activity[0];
@@ -177,7 +174,7 @@ export default function TaskDetailInline({ taskId, onBack }: { taskId: string; o
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
         {!canEdit && (
           <p className="flex items-center gap-1.5 text-[11px] text-text-secondary bg-black/[0.03] rounded-lg px-2.5 py-1.5">
-            <Lock size={11} /> Read-only — you can comment and follow, but not edit this task. Ask the workspace owner for edit access.
+            <Lock size={11} /> Read-only — you can comment, but not edit this task. Ask the workspace owner for edit access.
           </p>
         )}
 
@@ -495,53 +492,6 @@ export default function TaskDetailInline({ taskId, onBack }: { taskId: string; o
             >
               <Send size={15} />
             </button>
-          </div>
-        </div>
-
-        {/* Followers */}
-        <div className="border-t border-border pt-4">
-          <div className="flex items-center gap-2 mb-2.5">
-            <UserPlus size={15} className="text-text-secondary" />
-            <p className="text-xs text-text-secondary">Followers</p>
-            <span className="text-[11px] text-text-disabled">{followers.length}</span>
-            {user && (
-              <button
-                onClick={() => void setTaskFollower(workspace.id, task.id, user.id, !iFollow)}
-                className="ml-auto text-[12px] font-medium text-accent-purple hover:underline"
-              >
-                {iFollow ? 'Unfollow' : 'Follow'}
-              </button>
-            )}
-          </div>
-          <div className="flex items-center flex-wrap gap-2">
-            {followers.map((fid) => (
-              <span key={fid} className="flex items-center gap-1.5 bg-background border border-border rounded-full pl-1 pr-2 py-1">
-                <Avatar id={fid} name={memberName(fid)} size={20} />
-                <span className="text-[12px] text-text-primary">{memberName(fid)}</span>
-                {(canEdit || fid === user?.id) && (
-                  <button
-                    onClick={() => void setTaskFollower(workspace.id, task.id, fid, false)}
-                    className="text-text-disabled hover:text-accent-red"
-                    title="Remove follower"
-                  >
-                    <X size={12} />
-                  </button>
-                )}
-              </span>
-            ))}
-            {canEdit && notFollowing.length > 0 && (
-              <select
-                value=""
-                onChange={(e) => { if (e.target.value) void setTaskFollower(workspace.id, task.id, e.target.value, true); }}
-                className={`${fieldCls} py-1`}
-              >
-                <option value="">Add follower…</option>
-                {notFollowing.map((m) => <option key={m.userId} value={m.userId}>{m.user?.fullName ?? 'Unknown'}</option>)}
-              </select>
-            )}
-            {followers.length === 0 && !canEdit && (
-              <p className="text-[12px] text-text-disabled">No followers yet.</p>
-            )}
           </div>
         </div>
       </div>
